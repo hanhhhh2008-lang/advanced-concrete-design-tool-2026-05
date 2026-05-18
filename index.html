@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Advanced Concrete Design Tool 2026.05</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Advanced AS 3600 concrete analysis</p>
+        <h1>Advanced Concrete Design Tool 2026.05</h1>
+      </div>
+      <div class="header-actions">
+        <button id="aiAdjustHeaderBtn" class="secondary ai-button" type="button">AI Adjust Tool</button>
+        <button id="runAnalysisBtn" class="primary" type="button">Run Analysis</button>
+      </div>
+    </header>
+
+    <nav class="menu-bar" aria-label="Application menu">
+      <button type="button" class="menu-command" data-menu-command="file">File</button>
+      <button type="button" class="menu-command" data-menu-command="edit">Edit</button>
+      <button type="button" class="menu-command" data-menu-command="view">View</button>
+      <button type="button" class="menu-action" data-view="loads">Input</button>
+      <button type="button" id="calculateBtn">Calculate</button>
+      <button type="button" id="aiAdjustBtn" class="ai-menu-button">AI Adjust Tool</button>
+      <button type="button" class="menu-action" data-view="actions">Results</button>
+      <button type="button" class="menu-action" data-view="report">Report</button>
+      <button type="button" class="menu-action" data-view="messages">Help</button>
+    </nav>
+
+    <main class="workspace">
+      <aside class="input-panel">
+        <section id="memberSection">
+          <div class="section-title">
+            <h2>Member</h2>
+            <select id="memberType">
+              <option value="twoWay">Two-way slab panel</option>
+              <option value="slab">One-way slab strip</option>
+              <option value="beam">Beam</option>
+            </select>
+          </div>
+          <div class="grid two">
+            <label>Width b (mm)<input id="width" type="number" min="100" step="10" /></label>
+            <label>Depth D (mm)<input id="depth" type="number" min="80" step="10" /></label>
+            <label>Cover (mm)<input id="cover" type="number" min="10" step="5" /></label>
+            <label>Main bar dia. (mm)<input id="barDia" type="number" min="8" step="1" /></label>
+            <label>f'c (MPa)<input id="fc" type="number" min="20" step="5" /></label>
+            <label>fsy (MPa)<input id="fsy" type="number" min="250" step="10" /></label>
+            <label>Ec (MPa)<input id="ec" type="number" min="15000" step="500" /></label>
+            <label>FE elements/span<input id="elementsPerSpan" type="number" min="1" max="40" step="1" /></label>
+            <label>Service section analysis
+              <select id="sectionAnalysisMode">
+                <option value="uncracked">Uncracked transformed section</option>
+                <option value="cracked">Cracked transformed section</option>
+              </select>
+            </label>
+            <label>Column/slab fixity (%)<input id="columnFixity" type="number" min="0" max="100" step="5" /></label>
+            <label>Deflection check L/<input id="deflectionRatio" type="number" min="100" step="10" /></label>
+            <label>Compression stress check<input id="stressCompFactor" type="number" min="0.1" step="0.05" /></label>
+            <label>Tension stress check<input id="stressTensFactor" type="number" min="0" step="0.05" /></label>
+          </div>
+          <label class="check"><input id="selfWeight" type="checkbox" /> Include concrete self-weight at 24 kN/m3</label>
+          <div class="member-actions">
+            <span id="memberContextLabel">Two-way slab panel design</span>
+          </div>
+        </section>
+
+        <section id="sectionGeometrySection">
+          <div class="section-title">
+            <h2>Section Geometry</h2>
+            <button id="saveGeometryBtn" type="button" title="Save current concrete section">Save</button>
+          </div>
+          <div class="grid two">
+            <label>Section shape
+              <select id="sectionShape">
+                <option value="rect">Rectangular section</option>
+                <option value="tTop">T section, flange up</option>
+                <option value="tBottom">T section, flange down</option>
+                <option value="irregular">Wet / irregular equivalent</option>
+              </select>
+            </label>
+            <label>Flange width bf (mm)<input id="flangeWidth" type="number" min="100" step="25" /></label>
+            <label>Flange thickness tf (mm)<input id="flangeThickness" type="number" min="0" step="5" /></label>
+            <label>Equivalent area factor<input id="sectionAreaFactor" type="number" min="0.1" max="3" step="0.05" /></label>
+            <label>Equivalent inertia factor<input id="sectionInertiaFactor" type="number" min="0.1" max="5" step="0.05" /></label>
+            <label>Geometry name<input id="geometryName" type="text" /></label>
+            <label>Saved geometry
+              <select id="geometryLibrarySelect"></select>
+            </label>
+            <label class="check inline-check"><input id="wetAreaEnabled" type="checkbox" /> Wet area load</label>
+            <label>Wet / ponding load (kPa)<input id="wetLoadKpa" type="number" min="0" step="0.1" /></label>
+            <label>Wet area (%)<input id="wetAreaPercent" type="number" min="0" max="100" step="5" /></label>
+          </div>
+          <div class="geometry-actions">
+            <button id="loadGeometryBtn" class="secondary" type="button">Load Geometry</button>
+            <span id="geometryLibraryStatus">No saved geometry loaded.</span>
+          </div>
+        </section>
+
+        <section id="workflowSection" class="workflow-section">
+          <div class="section-title">
+            <h2>Workflow Navigator</h2>
+            <button id="workflowToggleBtn" class="compact-toggle" type="button" aria-expanded="true" aria-controls="workflowTree">Hide</button>
+          </div>
+          <div id="workflowTree" class="workflow-tree"></div>
+        </section>
+
+        <section id="aiProjectSection">
+          <div class="section-title">
+            <h2>AI Project File</h2>
+            <button id="saveProjectCheckBtn" type="button" title="Save current analysis into the project file">Save Check</button>
+          </div>
+          <div class="grid two">
+            <label>Project name<input id="projectName" type="text" /></label>
+            <label>Current check name<input id="projectCheckName" type="text" /></label>
+          </div>
+          <div class="ai-actions">
+            <button id="aiProjectAdjustBtn" class="ai-button" type="button">AI Adjust Tool</button>
+            <button id="aiAnalyzeProjectBtn" class="secondary" type="button">AI Analyze Project</button>
+            <button id="exportProjectBtn" type="button">Export Job File</button>
+            <button id="clearProjectBtn" type="button">Clear Job</button>
+          </div>
+          <div id="projectCheckList" class="project-check-list"></div>
+          <div id="aiRecommendations" class="ai-recommendations">Save one or more span checks, then run project analysis.</div>
+        </section>
+
+        <section id="twoWayPanelSection" class="member-layout-panel" data-member-section="twoWay">
+          <div class="section-title">
+            <h2>Two-Way Panel</h2>
+            <select id="supportType">
+              <option value="interior">Interior column</option>
+              <option value="edge">Edge column</option>
+              <option value="corner">Corner column</option>
+            </select>
+          </div>
+          <div class="grid two">
+            <label>Panel Lx (m)<input id="panelX" type="number" min="1" step="0.1" /></label>
+            <label>Panel Ly (m)<input id="panelY" type="number" min="1" step="0.1" /></label>
+            <label>Superimposed G (kPa)<input id="areaG" type="number" min="0" step="0.1" /></label>
+            <label>Live Q (kPa)<input id="areaQ" type="number" min="0" step="0.1" /></label>
+            <label>Column x (mm)<input id="columnX" type="number" min="100" step="25" /></label>
+            <label>Column y (mm)<input id="columnY" type="number" min="100" step="25" /></label>
+            <label>Column strip %<input id="columnStripPercent" type="number" min="20" max="80" step="5" /></label>
+            <label>Plate grid<input id="plateGrid" type="number" min="8" max="32" step="2" /></label>
+          </div>
+        </section>
+
+        <section id="spanInputSection" class="member-layout-panel" data-member-section="line">
+          <div class="section-title">
+            <h2 id="spanSectionTitle">One-Way Panel Input</h2>
+            <button id="addSpanBtn" type="button" title="Add span">+</button>
+          </div>
+          <p id="spanSectionHint" class="section-hint">Use span lengths and line loads for beam or one-way slab strip analysis.</p>
+          <div id="spans" class="rows"></div>
+          <div class="fixity-heading">
+            <h3>Support / Column Fixity</h3>
+            <span>0% pinned rotation, 100% near fixed column restraint</span>
+          </div>
+          <div id="supportFixities" class="support-fixity-grid"></div>
+        </section>
+
+        <section id="reinforcementSection">
+          <div class="section-title">
+            <h2>Reinforcement Schedule</h2>
+          </div>
+          <div class="reo-picker">
+            <div class="reo-group">
+              <div class="reo-group-head">
+                <div>
+                  <h3>Top face layers</h3>
+                  <span>Negative moment reinforcement</span>
+                </div>
+                <b id="topReoSummary">-</b>
+              </div>
+              <div id="topLayerRows" class="reo-layer-rows"></div>
+              <div id="topBarChips" class="bar-chip-grid"></div>
+            </div>
+            <div class="reo-group">
+              <div class="reo-group-head">
+                <div>
+                  <h3>Bottom face layers</h3>
+                  <span>Positive moment reinforcement</span>
+                </div>
+                <b id="bottomReoSummary">-</b>
+              </div>
+              <div id="bottomLayerRows" class="reo-layer-rows"></div>
+              <div id="bottomBarChips" class="bar-chip-grid"></div>
+            </div>
+          </div>
+          <div class="grid two reo-settings">
+            <label>Max slab spacing (mm)<input id="maxSpacing" type="number" min="100" step="25" /></label>
+            <label>Number of layers per face<input id="layers" type="number" min="1" max="3" step="1" /></label>
+          </div>
+          <div class="compat-inputs" hidden>
+            <input id="topLayerBars" value="N16" />
+            <input id="bottomLayerBars" value="N16" />
+            <input id="topBarsPerM" type="number" min="1" max="30" step="0.5" />
+            <input id="bottomBarsPerM" type="number" min="1" max="30" step="0.5" />
+          </div>
+          <div class="canvas-wrap input-section-canvas">
+            <canvas id="inputSectionCanvas" width="1200" height="420"></canvas>
+          </div>
+        </section>
+
+        <section id="postTensioningSection">
+          <div class="section-title">
+            <h2>Post-Tensioning</h2>
+          </div>
+          <label class="check"><input id="ptEnabled" type="checkbox" /> Include post-tensioning tendons</label>
+          <div class="grid two">
+            <label>Tendons per m / beam count<input id="ptTendonCount" type="number" min="0" step="0.5" /></label>
+            <label>Jacking force/tendon (kN)<input id="ptForce" type="number" min="0" step="5" /></label>
+            <label>Long-term losses (%)<input id="ptLossPercent" type="number" min="0" max="60" step="1" /></label>
+            <label>Strand area/tendon (mm2)<input id="ptStrandArea" type="number" min="0" step="10" /></label>
+          </div>
+          <div class="pt-profile-heading">
+            <h3>Tendon High / Low Points</h3>
+            <span id="ptProfileHint">High points are over supports; low points are near span sag points. Values are from slab/beam top face.</span>
+          </div>
+          <div id="ptProfileRows" class="pt-profile-grid"></div>
+          <div class="canvas-wrap pt-profile-canvas">
+            <canvas id="ptProfileCanvas" width="1200" height="260"></canvas>
+          </div>
+        </section>
+
+        <section id="deflectionParameterSection">
+          <div class="section-title">
+            <h2>Deflection / Crack Control</h2>
+          </div>
+          <div class="grid two">
+            <label>Crack-control basis
+              <select id="crackControlMode">
+                <option value="as3600">AS 3600:2018 editable parameters</option>
+                <option value="project">Project override</option>
+              </select>
+            </label>
+            <label>Crack spacing cap (mm)<input id="crackMaxSpacing" type="number" min="75" step="25" /></label>
+            <label>Sustained-load creep factor<input id="creepFactor" type="number" min="0" max="4" step="0.05" /></label>
+            <label>Shrinkage strain (microstrain)<input id="shrinkageStrain" type="number" min="0" step="25" /></label>
+            <label>Temperature change (deg C)<input id="temperatureDelta" type="number" step="1" /></label>
+            <label>Thermal coeff. (microstrain/deg C)<input id="thermalCoeff" type="number" min="0" step="0.5" /></label>
+            <label>Temperature restraint (%)<input id="temperatureRestraint" type="number" min="0" max="100" step="5" /></label>
+            <label>Humidity / drying factor<input id="humidityFactor" type="number" min="0.2" max="2" step="0.05" /></label>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-title">
+            <h2>Load Combinations</h2>
+            <button id="resetCombosBtn" type="button" title="Restore default combinations">Reset</button>
+          </div>
+          <div class="combo-selects">
+            <label>Strength design<select id="strengthCombo"></select></label>
+            <label>Service / deflection<select id="serviceCombo"></select></label>
+          </div>
+          <div class="mini-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Type</th>
+                  <th>SW</th>
+                  <th>G</th>
+                  <th>Q</th>
+                  <th>Pattern</th>
+                </tr>
+              </thead>
+              <tbody id="comboRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </aside>
+
+      <section class="output-panel">
+        <nav class="tabs" aria-label="Results views">
+          <button class="tab active" data-view="model">Model</button>
+          <button class="tab" data-view="messages">Messages</button>
+          <button class="tab" data-view="loads">Loads</button>
+          <button class="tab" data-view="envelopes">Envelopes</button>
+          <button class="tab" data-view="actions">Moments / Shear</button>
+          <button class="tab" data-view="limits">Deflection</button>
+          <button class="tab" data-view="design">Flexure / Shear</button>
+          <button class="tab" data-view="report">Report</button>
+        </nav>
+
+        <div class="view active" id="view-model">
+          <div class="output-layout">
+            <aside class="result-tree" id="resultTree"></aside>
+            <div>
+          <div id="designStatus" class="status-banner"></div>
+          <div class="canvas-wrap">
+            <canvas id="modelCanvas" width="1200" height="520"></canvas>
+          </div>
+          <div class="summary-grid" id="summary"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="view" id="view-messages">
+          <div id="messageWindow" class="message-window"></div>
+        </div>
+
+        <div class="view" id="view-loads">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Combination</th>
+                  <th>Combination type</th>
+                  <th>Formula</th>
+                  <th>Max M</th>
+                  <th>Max V</th>
+                  <th>Max deflection</th>
+                </tr>
+              </thead>
+              <tbody id="loadRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="view" id="view-envelopes">
+          <div class="canvas-wrap tall">
+            <canvas id="envelopeCanvas" width="1200" height="760"></canvas>
+          </div>
+          <div class="table-wrap envelope-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Envelope</th>
+                  <th>Location</th>
+                  <th>Value</th>
+                  <th>Governing combination / case</th>
+                  <th>Use in design</th>
+                </tr>
+              </thead>
+              <tbody id="envelopeRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="view" id="view-actions">
+          <div class="canvas-wrap tall">
+            <canvas id="diagramCanvas" width="1200" height="720"></canvas>
+          </div>
+        </div>
+
+        <div class="view" id="view-limits">
+          <div class="summary-grid deflection-summary" id="deflectionSummary"></div>
+          <div class="canvas-wrap tall">
+            <canvas id="limitCanvas" width="1200" height="760"></canvas>
+          </div>
+        </div>
+
+        <div class="view" id="view-design">
+          <div class="design-stack">
+            <div class="canvas-wrap section-canvas">
+              <canvas id="sectionCanvas" width="1200" height="420"></canvas>
+            </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Zone</th>
+                  <th>Location</th>
+                  <th>Mu*</th>
+                  <th>φMu</th>
+                  <th>As req.</th>
+                  <th>Provided</th>
+                  <th>Util.</th>
+                  <th>Check</th>
+                </tr>
+              </thead>
+              <tbody id="designRows"></tbody>
+            </table>
+          </div>
+          </div>
+        </div>
+
+        <div class="view" id="view-report">
+          <textarea id="report" readonly></textarea>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      Uses an advanced equivalent frame/design-strip FE workflow with strip, deflection and support-shear checks for engineering review, not certification.
+    </footer>
+
+    <script src="app.js?v=20260518-ai5"></script>
+  </body>
+</html>
