@@ -54,6 +54,9 @@ const defaults = {
   wetAreaEnabled: false,
   wetLoadKpa: 1.0,
   wetAreaPercent: 100,
+  surfaceCutEnabled: false,
+  surfaceCutFace: "top",
+  surfaceCutDepth: 0,
   crackControlMode: "as3600",
   crackMaxSpacing: 250,
   creepFactor: 1.5,
@@ -62,6 +65,7 @@ const defaults = {
   thermalCoeff: 10,
   temperatureRestraint: 50,
   humidityFactor: 1,
+  deflectionViewScale: 0.5,
   selfWeight: true,
   maxSpacing: 250,
   layers: 1,
@@ -70,10 +74,19 @@ const defaults = {
   topBarsPerM: 5,
   bottomBarsPerM: 5,
   ptEnabled: false,
+  ptForceMode: "tendons",
+  ptTargetPA: 1.2,
   ptTendonCount: 4,
   ptForce: 150,
   ptLossPercent: 15,
   ptStrandArea: 140,
+  ptBalanceTarget: 65,
+  ptProfileDatum: "top",
+  ptProfileShape: "parabolic",
+  ptTopCover: 25,
+  ptBottomCover: 25,
+  ptDuctDiameter: 13,
+  ptAnchorHeight: 110,
   panelX: 8,
   panelY: 7,
   areaG: 3,
@@ -82,6 +95,12 @@ const defaults = {
   columnY: 450,
   columnStripPercent: 50,
   plateGrid: 18,
+  columnsBelowCount: 1,
+  columnsBelowLayout: "grid",
+  columnsBelowSpacingX: 1.5,
+  columnsBelowSpacingY: 1.5,
+  transferLoadKn: 0,
+  transferFootprint: 600,
   supportType: "interior",
   projectName: "Concrete design job",
   projectCheckName: "Current span check",
@@ -157,18 +176,27 @@ function bindEvents() {
     renderSupportFixities();
     safeRun();
   });
-  ["ptEnabled", "ptTendonCount", "ptForce", "ptLossPercent", "ptStrandArea"].forEach((id) => {
-    $(id).addEventListener("change", () => {
+  ["ptEnabled", "ptForceMode", "ptTargetPA", "ptTendonCount", "ptForce", "ptLossPercent", "ptStrandArea", "ptBalanceTarget", "ptProfileDatum", "ptProfileShape", "ptTopCover", "ptBottomCover", "ptDuctDiameter", "ptAnchorHeight"].forEach((id) => {
+    $(id)?.addEventListener("change", () => {
       renderPtProfile();
       safeRun();
     });
   });
-  ["sectionShape", "flangeWidth", "flangeThickness", "sectionAreaFactor", "sectionInertiaFactor", "wetAreaEnabled", "wetLoadKpa", "wetAreaPercent"].forEach((id) => {
+  $("ptAutoProfileBtn")?.addEventListener("click", () => {
+    autoDrapePtProfile();
+    safeRun();
+  });
+  $("ptSetBalanceBtn")?.addEventListener("click", () => {
+    setPtTargetPAFromBalance();
+    safeRun();
+  });
+  ["sectionShape", "flangeWidth", "flangeThickness", "sectionAreaFactor", "sectionInertiaFactor", "wetAreaEnabled", "wetLoadKpa", "wetAreaPercent", "surfaceCutEnabled", "surfaceCutFace", "surfaceCutDepth"].forEach((id) => {
     $(id)?.addEventListener("change", () => {
       drawInputSectionPreview();
       safeRun();
     });
   });
+  $("geometry3dCanvas")?.addEventListener("pointerdown", handleGeometryCanvasPointer);
   $("saveGeometryBtn")?.addEventListener("click", () => {
     saveGeometryToLibrary();
     safeRun();
@@ -334,6 +362,9 @@ function geometrySnapshotFromControls() {
     wetAreaEnabled: $("wetAreaEnabled")?.checked || false,
     wetLoadKpa: Number($("wetLoadKpa")?.value || defaults.wetLoadKpa),
     wetAreaPercent: Number($("wetAreaPercent")?.value || defaults.wetAreaPercent),
+    surfaceCutEnabled: $("surfaceCutEnabled")?.checked || false,
+    surfaceCutFace: normaliseSurfaceCutFace($("surfaceCutFace")?.value),
+    surfaceCutDepth: Number($("surfaceCutDepth")?.value || defaults.surfaceCutDepth),
   };
 }
 
@@ -371,12 +402,15 @@ function applyGeometrySnapshot(item) {
     geometryName: item.name,
     wetLoadKpa: item.wetLoadKpa,
     wetAreaPercent: item.wetAreaPercent,
+    surfaceCutFace: item.surfaceCutFace,
+    surfaceCutDepth: item.surfaceCutDepth,
   };
   Object.entries(fields).forEach(([id, value]) => {
     const el = $(id);
     if (el && value != null) el.value = value;
   });
   if ($("wetAreaEnabled")) $("wetAreaEnabled").checked = Boolean(item.wetAreaEnabled);
+  if ($("surfaceCutEnabled")) $("surfaceCutEnabled").checked = Boolean(item.surfaceCutEnabled);
   if (item.memberType) state.lastMemberType = item.memberType;
   configureMemberInputs();
   renderReinforcementInput();
@@ -901,34 +935,47 @@ function renderPtProfile() {
   ensurePtProfile();
   const memberType = $("memberType")?.value || "twoWay";
   const isTwoWay = memberType === "twoWay";
+  const D = Number($("depth")?.value || defaults.depth);
+  const datum = normalisePtDatum($("ptProfileDatum")?.value);
+  const limits = ptProfileLimits();
+  const datumText = datum === "soffit" ? "height above soffit" : "distance from top face";
   $("ptProfileHint").textContent = isTwoWay
-    ? "Two-way mode uses an equivalent tendon band along panel Lx. High points are panel edge/support points; the low point is panel midspan."
-    : "High points are over supports; low points are near span sag points. Values are from slab/beam top face.";
+    ? `Two-way mode uses an equivalent tendon band along panel Lx. Enter tendon centreline ${datumText}; slab thickness is ${D.toFixed(0)} mm.`
+    : `High points are over supports and lows are near span sag points. Enter tendon centreline ${datumText}; section depth is ${D.toFixed(0)} mm.`;
+  const inputBounds = ptDatumBounds(limits, datum);
+  const profileInput = (kind, value, i, label) => {
+    const displayValue = ptProfileDisplayValue(value, datum, D);
+    const fromTop = value;
+    const aboveSoffit = D - value;
+    return `
+      <label>${label} (${datum === "soffit" ? "above soffit" : "from top"} mm)
+        <input type="number" min="${inputBounds.min.toFixed(0)}" max="${inputBounds.max.toFixed(0)}" step="5" value="${displayValue.toFixed(0)}" data-pt-profile="${kind}" data-pt-index="${i}">
+        <small>${fromTop.toFixed(0)} mm from top; ${aboveSoffit.toFixed(0)} mm above soffit</small>
+      </label>`;
+  };
   const highRows = state.ptProfile.highPoints.map(
-    (value, i) => `
-      <label>${isTwoWay ? `Panel edge H${i + 1}` : `Support S${i + 1} high point`} (mm)
-        <input type="number" min="0" step="5" value="${value}" data-pt-profile="high" data-pt-index="${i}">
-      </label>`
+    (value, i) => profileInput("high", value, i, isTwoWay ? `Panel edge H${i + 1}` : `Support S${i + 1} high point`)
   );
   const lowRows = state.ptProfile.lowPoints.map(
-    (value, i) => `
-      <label>${isTwoWay ? "Panel low point" : `Span ${i + 1} low point`} (mm)
-        <input type="number" min="0" step="5" value="${value}" data-pt-profile="low" data-pt-index="${i}">
-      </label>`
+    (value, i) => profileInput("low", value, i, isTwoWay ? "Panel low point" : `Span ${i + 1} low point`)
   );
   container.innerHTML = [...highRows, ...lowRows].join("");
   container.querySelectorAll("input").forEach((input) => {
-    input.addEventListener("change", (event) => {
-      const target = event.currentTarget;
-      clearAiSuggestionOnManualEdit(target, event);
-      const key = target.dataset.ptProfile === "high" ? "highPoints" : "lowPoints";
-      const index = Number(target.dataset.ptIndex);
-      state.ptProfile[key][index] = normalisePtPoint(Number(target.value));
-      target.value = state.ptProfile[key][index];
-      drawPtInputPreview();
-      safeRun();
+    ["input", "change"].forEach((eventName) => {
+      input.addEventListener(eventName, (event) => {
+        const target = event.currentTarget;
+        clearAiSuggestionOnManualEdit(target, event);
+        const key = target.dataset.ptProfile === "high" ? "highPoints" : "lowPoints";
+        const index = Number(target.dataset.ptIndex);
+        state.ptProfile[key][index] = normalisePtPoint(ptProfileValueFromDatum(Number(target.value), datum, D));
+        if (event.type === "change") target.value = ptProfileDisplayValue(state.ptProfile[key][index], datum, D).toFixed(0);
+        renderPtProfileSummary();
+        drawPtInputPreview();
+        safeRun();
+      });
     });
   });
+  renderPtProfileSummary();
   drawPtInputPreview();
 }
 
@@ -951,17 +998,153 @@ function resizePtArray(items, targetCount, fallback) {
 }
 
 function defaultPtHighPoint() {
-  return Math.max(35, Number($("cover")?.value || defaults.cover) + 25);
+  return ptProfileLimits().min;
 }
 
 function defaultPtLowPoint() {
-  const depth = Number($("depth")?.value || defaults.depth);
-  return Math.max(defaultPtHighPoint() + 20, depth - Math.max(45, Number($("cover")?.value || defaults.cover) + 25));
+  return ptProfileLimits().max;
 }
 
 function normalisePtPoint(value) {
   const numeric = Number(value);
-  return Math.max(0, Number.isFinite(numeric) ? numeric : 0);
+  const limits = ptProfileLimits();
+  return clamp(Number.isFinite(numeric) ? numeric : limits.min, limits.min, limits.max);
+}
+
+function normalisePtDatum(value) {
+  return value === "soffit" ? "soffit" : "top";
+}
+
+function normalisePtForceMode(value) {
+  return value === "pa" ? "pa" : "tendons";
+}
+
+function normalisePtProfileShape(value) {
+  return value === "straight" ? "straight" : "parabolic";
+}
+
+function ptProfileLimits(source = null) {
+  const D = Math.max(Number(source?.D ?? $("depth")?.value ?? defaults.depth), 1);
+  const topCover = Math.max(0, Number(source?.ptTopCover ?? $("ptTopCover")?.value ?? defaults.ptTopCover));
+  const bottomCover = Math.max(0, Number(source?.ptBottomCover ?? $("ptBottomCover")?.value ?? defaults.ptBottomCover));
+  const duct = Math.max(0, Number(source?.ptDuctDiameter ?? $("ptDuctDiameter")?.value ?? defaults.ptDuctDiameter));
+  const min = topCover + duct / 2;
+  const max = Math.max(min, D - bottomCover - duct / 2);
+  return { D, topCover, bottomCover, duct, min, max, usable: Math.max(0, max - min) };
+}
+
+function ptDatumBounds(limits, datum) {
+  if (datum === "soffit") return { min: limits.D - limits.max, max: limits.D - limits.min };
+  return { min: limits.min, max: limits.max };
+}
+
+function ptProfileDisplayValue(fromTop, datum, depth) {
+  return datum === "soffit" ? Math.max(0, depth - fromTop) : fromTop;
+}
+
+function ptProfileValueFromDatum(value, datum, depth) {
+  return datum === "soffit" ? depth - value : value;
+}
+
+function renderPtProfileSummary(input = null) {
+  const target = $("ptProfileSummary");
+  if (!target) return;
+  const source = input || previewPtInputFromDom();
+  const limits = ptProfileLimits(source);
+  const pa = ptPAStress(source);
+  const maxBalance = source.memberType === "twoWay" ? ptTwoWayBalancedLoad(source) : Math.max(0, ...source.spans.map((_, i) => ptBalancedLoadForSpan(source, i)));
+  const units = source.memberType === "beam" ? "kN/m" : "kPa";
+  const lows = source.ptLowPoints?.length ? source.ptLowPoints : [defaultPtLowPoint()];
+  const lowText = lows.map((low) => `${low.toFixed(0)} top / ${(source.D - low).toFixed(0)} soffit`).join("; ");
+  target.innerHTML = [
+    ["Slab / beam thickness", `${source.D.toFixed(0)} mm`, `Tendon centreline zone ${limits.min.toFixed(0)}-${limits.max.toFixed(0)} mm from top`],
+    ["Effective P/A", `${pa.toFixed(2)} MPa`, `${ptEffectiveForce(source).toFixed(0)} kN effective force`],
+    ["Profile low points", lowText, "shown as from top / above soffit"],
+    ["Equivalent balanced load", `${maxBalance.toFixed(2)} ${units}`, `${normalisePtProfileShape(source.ptProfileShape)} profile approximation`],
+  ]
+    .map(([title, value, note]) => `<div><b>${escapeHtml(title)}: ${escapeHtml(value)}</b><span>${escapeHtml(note)}</span></div>`)
+    .join("");
+  updatePtForceSummary(source);
+}
+
+function previewPtInputFromDom() {
+  const memberType = $("memberType")?.value || defaults.memberType;
+  const base = {
+    memberType,
+    b: Number($("width")?.value || defaults.width),
+    D: Number($("depth")?.value || defaults.depth),
+    sectionShape: normaliseSectionShape($("sectionShape")?.value),
+    flangeWidth: Number($("flangeWidth")?.value || defaults.flangeWidth),
+    flangeThickness: Number($("flangeThickness")?.value || defaults.flangeThickness),
+    sectionAreaFactor: Number($("sectionAreaFactor")?.value || defaults.sectionAreaFactor),
+    sectionInertiaFactor: Number($("sectionInertiaFactor")?.value || defaults.sectionInertiaFactor),
+    ptEnabled: $("ptEnabled")?.checked || false,
+    ptForceMode: normalisePtForceMode($("ptForceMode")?.value),
+    ptTargetPA: Number($("ptTargetPA")?.value || defaults.ptTargetPA),
+    ptTendonCount: Number($("ptTendonCount")?.value || defaults.ptTendonCount),
+    ptForce: Number($("ptForce")?.value || defaults.ptForce),
+    ptLossPercent: Number($("ptLossPercent")?.value || defaults.ptLossPercent),
+    ptStrandArea: Number($("ptStrandArea")?.value || defaults.ptStrandArea),
+    ptTopCover: Number($("ptTopCover")?.value || defaults.ptTopCover),
+    ptBottomCover: Number($("ptBottomCover")?.value || defaults.ptBottomCover),
+    ptDuctDiameter: Number($("ptDuctDiameter")?.value || defaults.ptDuctDiameter),
+    ptProfileShape: normalisePtProfileShape($("ptProfileShape")?.value),
+    panelX: Number($("panelX")?.value || defaults.panelX),
+    spans: state.spans.map((span) => ({ ...span })),
+  };
+  base.sectionProperties = sectionProperties(base);
+  base.Agross = base.sectionProperties.area;
+  base.ptHighPoints = state.ptProfile.highPoints.map((value) => normalisePtPoint(value));
+  base.ptLowPoints = state.ptProfile.lowPoints.map((value) => normalisePtPoint(value));
+  base.ptEffectiveForce = ptEffectiveForce(base);
+  return base;
+}
+
+function updatePtForceSummary(input = null) {
+  const target = $("ptForceSummary");
+  if (!target) return;
+  const source = input || previewPtInputFromDom();
+  const method = normalisePtForceMode(source.ptForceMode) === "pa" ? "target P/A" : "tendon force";
+  target.textContent = `${method}: P=${ptEffectiveForce(source).toFixed(0)} kN, P/A=${ptPAStress(source).toFixed(2)} MPa after selected losses.`;
+}
+
+function autoDrapePtProfile() {
+  ensurePtProfile();
+  const limits = ptProfileLimits();
+  state.ptProfile.highPoints = state.ptProfile.highPoints.map(() => limits.min);
+  state.ptProfile.lowPoints = state.ptProfile.lowPoints.map(() => limits.max);
+  const anchor = $("ptAnchorHeight");
+  if (anchor) anchor.value = clamp(Number(anchor.value || limits.D / 2), limits.min, limits.max).toFixed(0);
+  renderPtProfile();
+}
+
+function setPtTargetPAFromBalance() {
+  const input = readInputs();
+  const targetRatio = clamp((Number($("ptBalanceTarget")?.value || defaults.ptBalanceTarget) || 0) / 100, 0, 1.5);
+  const requiredForce = requiredPtForceForBalance(input, targetRatio);
+  if (requiredForce <= 0 || !Number.isFinite(requiredForce)) return;
+  const targetPA = (requiredForce * 1000) / Math.max(input.Agross, 1);
+  if ($("ptForceMode")) $("ptForceMode").value = "pa";
+  if ($("ptTargetPA")) $("ptTargetPA").value = targetPA.toFixed(2);
+  renderPtProfile();
+}
+
+function requiredPtForceForBalance(input, targetRatio) {
+  if (input.memberType === "twoWay") {
+    const sag = ptProfileSag(input, 0);
+    if (sag <= 1e-6) return 0;
+    const targetLoad = targetRatio * (selfWeightAreaLoad(input) + input.areaG + input.wetAreaLoad + (input.transferAreaLoad || 0) + DEFAULT_PSI_SHORT * input.areaQ);
+    return (targetLoad * input.panelX * input.panelX) / (8 * sag);
+  }
+  return Math.max(
+    0,
+    ...input.spans.map((span, i) => {
+      const sag = ptProfileSag(input, i);
+      if (sag <= 1e-6) return 0;
+      const targetLoad = targetRatio * (input.selfWeightLoad + input.wetLineLoad + span.g + DEFAULT_PSI_SHORT * span.q);
+      return (targetLoad * span.length * span.length) / (8 * sag);
+    })
+  );
 }
 
 function applyMemberPreset(memberType) {
@@ -1284,6 +1467,9 @@ function readInputs() {
     wetAreaEnabled: $("wetAreaEnabled")?.checked || false,
     wetLoadKpa: Number($("wetLoadKpa")?.value),
     wetAreaPercent: Number($("wetAreaPercent")?.value),
+    surfaceCutEnabled: $("surfaceCutEnabled")?.checked || false,
+    surfaceCutFace: normaliseSurfaceCutFace($("surfaceCutFace")?.value),
+    surfaceCutDepth: Number($("surfaceCutDepth")?.value),
     crackControlMode: $("crackControlMode")?.value || defaults.crackControlMode,
     crackMaxSpacing: Number($("crackMaxSpacing")?.value),
     creepFactor: Number($("creepFactor")?.value),
@@ -1292,6 +1478,7 @@ function readInputs() {
     thermalCoeff: Number($("thermalCoeff")?.value),
     temperatureRestraint: Number($("temperatureRestraint")?.value),
     humidityFactor: Number($("humidityFactor")?.value),
+    deflectionViewScale: Number($("deflectionViewScale")?.value || defaults.deflectionViewScale),
     selfWeight: $("selfWeight").checked,
     panelX: Number($("panelX").value),
     panelY: Number($("panelY").value),
@@ -1301,6 +1488,12 @@ function readInputs() {
     columnY: Number($("columnY").value),
     columnStripPercent: Number($("columnStripPercent").value),
     plateGrid: Number($("plateGrid").value),
+    columnsBelowCount: Number($("columnsBelowCount")?.value || defaults.columnsBelowCount),
+    columnsBelowLayout: normaliseColumnsBelowLayout($("columnsBelowLayout")?.value),
+    columnsBelowSpacingX: Number($("columnsBelowSpacingX")?.value || defaults.columnsBelowSpacingX),
+    columnsBelowSpacingY: Number($("columnsBelowSpacingY")?.value || defaults.columnsBelowSpacingY),
+    transferLoadKn: Number($("transferLoadKn")?.value || defaults.transferLoadKn),
+    transferFootprint: Number($("transferFootprint")?.value || defaults.transferFootprint),
     supportType: $("supportType").value,
     maxSpacing: Number($("maxSpacing").value),
     layers: Number($("layers").value),
@@ -1314,10 +1507,19 @@ function readInputs() {
     bars: designBars,
     supportFixities: supportFixitiesForInput(),
     ptEnabled: $("ptEnabled").checked,
+    ptForceMode: normalisePtForceMode($("ptForceMode")?.value),
+    ptTargetPA: Number($("ptTargetPA")?.value),
     ptTendonCount: Number($("ptTendonCount").value),
     ptForce: Number($("ptForce").value),
     ptLossPercent: Number($("ptLossPercent").value),
     ptStrandArea: Number($("ptStrandArea").value),
+    ptBalanceTarget: Number($("ptBalanceTarget")?.value),
+    ptProfileDatum: normalisePtDatum($("ptProfileDatum")?.value),
+    ptProfileShape: normalisePtProfileShape($("ptProfileShape")?.value),
+    ptTopCover: Number($("ptTopCover")?.value),
+    ptBottomCover: Number($("ptBottomCover")?.value),
+    ptDuctDiameter: Number($("ptDuctDiameter")?.value),
+    ptAnchorHeight: Number($("ptAnchorHeight")?.value),
     ptHighPoints: ptProfileForInput().highPoints,
     ptLowPoints: ptProfileForInput().lowPoints,
     spans: state.spans.map((span) => ({ ...span, system: normaliseSpanSystem(span.system) })),
@@ -1333,6 +1535,7 @@ function readInputs() {
   data.selfWeightLoad = data.selfWeight ? 24 * (data.Agross / 1e6) : 0;
   data.wetAreaLoad = data.wetAreaEnabled ? Math.max(0, data.wetLoadKpa || 0) * clamp((data.wetAreaPercent || 0) / 100, 0, 1) : 0;
   data.wetLineLoad = data.wetAreaLoad * (data.b / 1000);
+  data.transferAreaLoad = data.memberType === "twoWay" ? Math.max(0, data.transferLoadKn || 0) / Math.max(data.panelX * data.panelY, 1e-9) : 0;
   data.ptEffectiveForce = ptEffectiveForce(data);
   return data;
 }
@@ -1359,6 +1562,14 @@ function parseBars(text) {
 
 function normaliseSectionShape(value) {
   return ["rect", "tTop", "tBottom", "irregular"].includes(value) ? value : "rect";
+}
+
+function normaliseSurfaceCutFace(value) {
+  return value === "bottom" ? "bottom" : "top";
+}
+
+function normaliseColumnsBelowLayout(value) {
+  return ["grid", "lineX", "lineY"].includes(value) ? value : "grid";
 }
 
 function sectionShapeLabel(input) {
@@ -1395,14 +1606,37 @@ function sectionRectangles(input) {
   const depth = Math.max(input.D || 1, 1);
   const flangeWidth = Math.max(input.flangeWidth || webWidth, webWidth);
   const flangeThickness = clamp(input.flangeThickness || 0, 0, depth);
+  let rectangles;
   if ((shape === "tTop" || shape === "tBottom") && flangeThickness > 0 && flangeWidth > webWidth) {
     const flangeY = shape === "tTop" ? 0 : depth - flangeThickness;
-    return [
+    rectangles = [
       { y: 0, h: depth, b: webWidth },
       { y: flangeY, h: flangeThickness, b: flangeWidth - webWidth },
     ];
+  } else {
+    rectangles = [{ y: 0, h: depth, b: webWidth }];
   }
-  return [{ y: 0, h: depth, b: webWidth }];
+  return applySurfaceCutToRectangles(rectangles, input);
+}
+
+function surfaceCutDepth(input) {
+  if (!input?.surfaceCutEnabled) return 0;
+  return clamp(Number(input.surfaceCutDepth || 0), 0, Math.max(0, (input.D || 0) - 20));
+}
+
+function applySurfaceCutToRectangles(rectangles, input) {
+  const cut = surfaceCutDepth(input);
+  if (cut <= 0) return rectangles;
+  const depth = Math.max(input.D || 1, 1);
+  const topLimit = normaliseSurfaceCutFace(input.surfaceCutFace) === "top" ? cut : 0;
+  const bottomLimit = normaliseSurfaceCutFace(input.surfaceCutFace) === "bottom" ? depth - cut : depth;
+  return rectangles
+    .map((rect) => {
+      const y1 = Math.max(rect.y, topLimit);
+      const y2 = Math.min(rect.y + rect.h, bottomLimit);
+      return { ...rect, y: y1, h: Math.max(0, y2 - y1) };
+    })
+    .filter((rect) => rect.h > 0.001 && rect.b > 0);
 }
 
 function sectionProperties(input) {
@@ -1455,6 +1689,7 @@ function safeRun() {
 
 function run() {
   const input = readInputs();
+  renderPtProfileSummary(input);
   const validation = validateInputData(input);
   state.validation = validation;
   applyInputValidation(validation);
@@ -1552,6 +1787,12 @@ function validateInputData(input) {
   if (!Number.isFinite(input.sectionAreaFactor) || input.sectionAreaFactor <= 0) error("sectionAreaFactor", "Equivalent area factor must be positive.");
   if (!Number.isFinite(input.sectionInertiaFactor) || input.sectionInertiaFactor <= 0) error("sectionInertiaFactor", "Equivalent inertia factor must be positive.");
   if (input.sectionShape === "irregular") warn(["sectionAreaFactor", "sectionInertiaFactor"], "Irregular geometry uses equivalent area and inertia factors; verify the section properties from project geometry.");
+  if (input.surfaceCutEnabled) {
+    if (!["top", "bottom"].includes(input.surfaceCutFace)) error("surfaceCutFace", "Surface cut face must be top or bottom.");
+    if (!Number.isFinite(input.surfaceCutDepth) || input.surfaceCutDepth < 0) error("surfaceCutDepth", "Surface cut depth cannot be negative.");
+    if (input.surfaceCutDepth >= input.D - 20) error(["surfaceCutDepth", "depth"], "Surface cut leaves too little concrete thickness.");
+    warn(["surfaceCutEnabled", "surfaceCutDepth"], "Surface cut/rebate reduces gross section area, self-weight and service stiffness; verify local detailing and cover.");
+  }
   if (input.wetAreaEnabled) {
     if (!Number.isFinite(input.wetLoadKpa) || input.wetLoadKpa < 0) error("wetLoadKpa", "Wet area load cannot be negative.");
     if (!Number.isFinite(input.wetAreaPercent) || input.wetAreaPercent < 0 || input.wetAreaPercent > 100) error("wetAreaPercent", "Wet area percentage must be between 0% and 100%.");
@@ -1562,6 +1803,7 @@ function validateInputData(input) {
   if (!Number.isFinite(input.thermalCoeff) || input.thermalCoeff < 0) error("thermalCoeff", "Thermal coefficient cannot be negative.");
   if (!Number.isFinite(input.temperatureRestraint) || input.temperatureRestraint < 0 || input.temperatureRestraint > 100) error("temperatureRestraint", "Temperature restraint must be between 0% and 100%.");
   if (!Number.isFinite(input.humidityFactor) || input.humidityFactor <= 0) error("humidityFactor", "Humidity / drying factor must be positive.");
+  if (!Number.isFinite(input.deflectionViewScale) || input.deflectionViewScale < 0.25 || input.deflectionViewScale > 3) error("deflectionViewScale", "Deflection diagram zoom must be between 25% and 300%.");
   if (!input.topBars.length) error("topLayerBars", "No valid top layer bar sizes are available.");
   if (!input.bottomBars.length) error("bottomLayerBars", "No valid bottom layer bar sizes are available.");
   if (!input.bars.length) error(["topLayerBars", "bottomLayerBars"], "No valid reinforcement bar sizes are available for the selected member type.");
@@ -1580,23 +1822,43 @@ function validateInputData(input) {
     if (input.bottomBarsPerM > 20) warn(`[data-reo-face="bottom"][data-reo-field="count"]`, "Bottom bars per metre is very dense; check constructability.");
   }
   if (input.ptEnabled) {
-    if (!Number.isFinite(input.ptTendonCount) || input.ptTendonCount <= 0) error("ptTendonCount", "PT tendon count must be greater than zero when post-tensioning is enabled.");
-    if (!Number.isFinite(input.ptForce) || input.ptForce <= 0) error("ptForce", "PT jacking force per tendon must be greater than zero.");
+    if (!["tendons", "pa"].includes(input.ptForceMode)) error("ptForceMode", "Select a valid PT force input method.");
+    if (!Number.isFinite(input.ptTopCover) || input.ptTopCover < 0) error("ptTopCover", "PT top cover cannot be negative.");
+    if (!Number.isFinite(input.ptBottomCover) || input.ptBottomCover < 0) error("ptBottomCover", "PT bottom cover cannot be negative.");
+    if (!Number.isFinite(input.ptDuctDiameter) || input.ptDuctDiameter < 0) error("ptDuctDiameter", "PT duct / tendon diameter cannot be negative.");
+    const ptLimits = ptProfileLimits(input);
+    if (ptLimits.usable <= 5) error(["depth", "ptTopCover", "ptBottomCover", "ptDuctDiameter"], "Section thickness is too small for the selected PT cover and duct diameter.");
+    if (input.ptForceMode === "pa") {
+      if (!Number.isFinite(input.ptTargetPA) || input.ptTargetPA <= 0) error("ptTargetPA", "Effective P/A target must be greater than zero.");
+      if (input.ptTargetPA > 3.5) warn("ptTargetPA", "Effective P/A is high; verify transfer and working stress limits for the project.");
+    } else {
+      if (!Number.isFinite(input.ptTendonCount) || input.ptTendonCount <= 0) error("ptTendonCount", "PT tendon count must be greater than zero when post-tensioning is enabled.");
+      if (!Number.isFinite(input.ptForce) || input.ptForce <= 0) error("ptForce", "PT jacking force per tendon must be greater than zero.");
+    }
     if (!Number.isFinite(input.ptLossPercent) || input.ptLossPercent < 0 || input.ptLossPercent > 60) error("ptLossPercent", "PT long-term losses must be between 0% and 60%.");
-    if (!Number.isFinite(input.ptStrandArea) || input.ptStrandArea <= 0) error("ptStrandArea", "PT strand area per tendon must be greater than zero.");
+    if (input.ptForceMode === "tendons" && (!Number.isFinite(input.ptStrandArea) || input.ptStrandArea <= 0)) error("ptStrandArea", "PT strand area per tendon must be greater than zero.");
+    if (!Number.isFinite(input.ptBalanceTarget) || input.ptBalanceTarget < 0 || input.ptBalanceTarget > 150) error("ptBalanceTarget", "PT balance target must be between 0% and 150%.");
+    if (!["top", "soffit"].includes(input.ptProfileDatum)) error("ptProfileDatum", "Select a valid PT profile datum.");
+    if (!["parabolic", "straight"].includes(input.ptProfileShape)) error("ptProfileShape", "Select a valid PT profile shape.");
+    if (!Number.isFinite(input.ptAnchorHeight) || input.ptAnchorHeight < ptLimits.min || input.ptAnchorHeight > ptLimits.max) error("ptAnchorHeight", "PT anchorage height must stay inside cover limits.");
     [...input.ptHighPoints, ...input.ptLowPoints].forEach((point, i) => {
       const isHigh = i < input.ptHighPoints.length;
       const index = isHigh ? i : i - input.ptHighPoints.length;
       const field = `[data-pt-profile="${isHigh ? "high" : "low"}"][data-pt-index="${index}"]`;
-      if (!Number.isFinite(point) || point < input.cover || point > input.D - input.cover) error(field, "PT profile point must stay inside cover from the top and bottom faces.");
+      if (!Number.isFinite(point) || point < ptLimits.min || point > ptLimits.max) error(field, "PT profile point must stay inside the selected tendon cover limits.");
     });
     input.ptLowPoints.forEach((low, i) => {
       const highA = input.ptHighPoints[i] ?? input.ptHighPoints[0] ?? defaultPtHighPoint();
       const highB = input.ptHighPoints[i + 1] ?? input.ptHighPoints[input.ptHighPoints.length - 1] ?? highA;
       if (low <= (highA + highB) / 2) warn(`[data-pt-profile="low"][data-pt-index="${i}"]`, `Span ${i + 1} low point is not below the adjacent high points, so balancing load will be small or reversed.`);
     });
-    const effectiveStress = (input.ptForce * (1 - input.ptLossPercent / 100) * 1000) / Math.max(input.ptStrandArea, 1);
-    if (effectiveStress > 1400) warn(["ptForce", "ptStrandArea", "ptLossPercent"], "Effective prestress stress is high; verify tendon force, strand area and losses.");
+    if (input.ptProfileShape === "straight") warn("ptProfileShape", "Straight profile is drawn as straight segments; equivalent balanced load remains a simplified span load approximation.");
+    const pa = ptPAStress(input);
+    if (pa < 0.5) warn("ptTargetPA", "Effective P/A is low for a PT slab/beam starting point; check service stress and deflection intent.");
+    if (input.ptForceMode === "tendons") {
+      const effectiveStress = (input.ptForce * (1 - input.ptLossPercent / 100) * 1000) / Math.max(input.ptStrandArea, 1);
+      if (effectiveStress > 1400) warn(["ptForce", "ptStrandArea", "ptLossPercent"], "Effective prestress stress is high; verify tendon force, strand area and losses.");
+    }
   }
 
   if (input.memberType === "twoWay") {
@@ -1610,6 +1872,13 @@ function validateInputData(input) {
     if (input.columnY / 1000 >= input.panelY * 0.8) error(["columnY", "panelY"], "Column y dimension conflicts with panel Ly.");
     if (input.columnStripPercent < 20 || input.columnStripPercent > 80) error("columnStripPercent", "Column strip percentage must stay between 20% and 80%.");
     if (input.plateGrid < 8 || input.plateGrid > 40) error("plateGrid", "Plate grid should be between 8 and 40.");
+    if (!Number.isFinite(input.columnsBelowCount) || input.columnsBelowCount < 1 || input.columnsBelowCount > 9) error("columnsBelowCount", "Columns below count must be between 1 and 9.");
+    if (!["grid", "lineX", "lineY"].includes(input.columnsBelowLayout)) error("columnsBelowLayout", "Select a valid below-column layout.");
+    if (!Number.isFinite(input.columnsBelowSpacingX) || input.columnsBelowSpacingX < 0) error("columnsBelowSpacingX", "Below-column X spacing cannot be negative.");
+    if (!Number.isFinite(input.columnsBelowSpacingY) || input.columnsBelowSpacingY < 0) error("columnsBelowSpacingY", "Below-column Y spacing cannot be negative.");
+    if (!Number.isFinite(input.transferLoadKn) || input.transferLoadKn < 0) error("transferLoadKn", "Transfer loading cannot be negative.");
+    if (!Number.isFinite(input.transferFootprint) || input.transferFootprint < 100) error("transferFootprint", "Transfer footprint must be at least 100 mm.");
+    if (input.transferLoadKn > 0) warn("transferLoadKn", "Transfer loading is included as an equivalent panel gravity load and highlighted in diagrams; verify local load path separately.");
     const aspect = Math.max(input.panelX, input.panelY) / Math.max(0.001, Math.min(input.panelX, input.panelY));
     if (aspect > 2) warn(["panelX", "panelY"], "Panel aspect ratio is above 2.0; a one-way slab idealisation may govern.");
   } else {
@@ -1806,7 +2075,7 @@ function clearAnalysisOutputs() {
   });
   const report = $("report");
   if (report) report.value = "INPUT VALIDATION FAILED\n\nCorrect the red input fields, then click Run Analysis.";
-  ["modelCanvas", "diagramCanvas", "envelopeCanvas", "limitCanvas", "sectionCanvas", "inputSectionCanvas"].forEach((id) => {
+  ["modelCanvas", "diagramCanvas", "envelopeCanvas", "limitCanvas", "sectionCanvas", "inputSectionCanvas", "geometry3dCanvas"].forEach((id) => {
     const canvas = $(id);
     if (canvas?.getContext) clear(canvas.getContext("2d"), canvas);
   });
@@ -1854,7 +2123,7 @@ function analyseTwoWayForCombo(input, combo) {
 }
 
 function comboAreaLoad(input, combo) {
-  return combo.sw * selfWeightAreaLoad(input) + combo.g * (input.areaG + input.wetAreaLoad) + combo.q * input.areaQ - ptTwoWayBalancedLoad(input);
+  return combo.sw * selfWeightAreaLoad(input) + combo.g * (input.areaG + input.wetAreaLoad + (input.transferAreaLoad || 0)) + combo.q * input.areaQ - ptTwoWayBalancedLoad(input);
 }
 
 function findSustainedDeflectionCombo(input, fallback) {
@@ -1881,8 +2150,22 @@ function longTermDeflectionMultiplier(input = {}) {
 
 function ptEffectiveForce(input) {
   if (!input.ptEnabled) return 0;
+  if (normalisePtForceMode(input.ptForceMode) === "pa") {
+    return Math.max(0, input.ptTargetPA || 0) * Math.max(input.Agross || 0, 0) / 1000;
+  }
   const grossForce = Math.max(0, input.ptTendonCount || 0) * Math.max(0, input.ptForce || 0);
   return grossForce * (1 - clamp((input.ptLossPercent || 0) / 100, 0, 0.6));
+}
+
+function ptPAStress(input) {
+  return (ptEffectiveForce(input) * 1000) / Math.max(input.Agross || 1, 1);
+}
+
+function ptProfileSag(input, spanIndex) {
+  const highA = input.ptHighPoints?.[spanIndex] ?? input.ptHighPoints?.[0] ?? defaultPtHighPoint();
+  const highB = input.ptHighPoints?.[spanIndex + 1] ?? input.ptHighPoints?.[input.ptHighPoints.length - 1] ?? highA;
+  const low = input.ptLowPoints?.[spanIndex] ?? defaultPtLowPoint();
+  return (low - (highA + highB) / 2) / 1000;
 }
 
 function ptBalancedLoadForSpan(input, spanIndex) {
@@ -1890,10 +2173,7 @@ function ptBalancedLoadForSpan(input, spanIndex) {
   if (!input.ptEnabled || P <= 0) return 0;
   const L = input.spans?.[spanIndex]?.length || (input.memberType === "twoWay" ? input.panelX : 0);
   if (!L) return 0;
-  const highA = input.ptHighPoints?.[spanIndex] ?? input.ptHighPoints?.[0] ?? defaultPtHighPoint();
-  const highB = input.ptHighPoints?.[spanIndex + 1] ?? input.ptHighPoints?.[input.ptHighPoints.length - 1] ?? highA;
-  const low = input.ptLowPoints?.[spanIndex] ?? defaultPtLowPoint();
-  const sag = (low - (highA + highB) / 2) / 1000;
+  const sag = ptProfileSag(input, spanIndex);
   return (8 * P * sag) / (L * L);
 }
 
@@ -1920,20 +2200,28 @@ function tendonPointFromTop(input, x) {
       const highA = input.ptHighPoints?.[i] ?? input.ptHighPoints?.[0] ?? defaultPtHighPoint();
       const highB = input.ptHighPoints?.[i + 1] ?? input.ptHighPoints?.[input.ptHighPoints.length - 1] ?? highA;
       const low = input.ptLowPoints?.[i] ?? defaultPtLowPoint();
-      const linear = highA + (highB - highA) * r;
-      const midLinear = (highA + highB) / 2;
-      return linear + 4 * (low - midLinear) * r * (1 - r);
+      return tendonProfilePoint(input, r, highA, highB, low);
     }
     start = end;
   }
   return input.D / 2;
 }
 
+function tendonProfilePoint(input, r, highA, highB, low) {
+  if (normalisePtProfileShape(input.ptProfileShape) === "straight") {
+    if (r <= 0.5) return highA + (low - highA) * (r / 0.5);
+    return low + (highB - low) * ((r - 0.5) / 0.5);
+  }
+  const linear = highA + (highB - highA) * r;
+  const midLinear = (highA + highB) / 2;
+  return linear + 4 * (low - midLinear) * r * (1 - r);
+}
+
 function ptSummaryText(input) {
   if (!input.ptEnabled) return "off";
   const balance = input.memberType === "twoWay" ? ptTwoWayBalancedLoad(input) : Math.max(0, ...input.spans.map((_, i) => ptBalancedLoadForSpan(input, i)));
   const units = input.memberType === "twoWay" || input.memberType === "slab" ? "kPa" : "kN/m";
-  return `${ptEffectiveForce(input).toFixed(0)} kN effective, max balance ${balance.toFixed(2)} ${units}`;
+  return `${ptEffectiveForce(input).toFixed(0)} kN effective, P/A ${ptPAStress(input).toFixed(2)} MPa, max balance ${balance.toFixed(2)} ${units}`;
 }
 
 function makeOneWayDeflectionSet(input, shortService, sustainedService, shortCombo, sustainedCombo) {
@@ -3533,6 +3821,7 @@ function drawInputSectionPreview() {
     const title = input.memberType === "twoWay" ? "Two-way slab design strip reinforcement input" : "One-way slab strip reinforcement input";
     drawSlabInputSection(ctx, canvas, input, title);
   }
+  drawGeometry3dPreview(input);
 }
 
 function currentSectionPreviewInput() {
@@ -3558,6 +3847,13 @@ function currentSectionPreviewInput() {
     flangeThickness: Number($("flangeThickness")?.value || defaults.flangeThickness),
     sectionAreaFactor: Number($("sectionAreaFactor")?.value || defaults.sectionAreaFactor),
     sectionInertiaFactor: Number($("sectionInertiaFactor")?.value || defaults.sectionInertiaFactor),
+    surfaceCutEnabled: $("surfaceCutEnabled")?.checked || false,
+    surfaceCutFace: normaliseSurfaceCutFace($("surfaceCutFace")?.value),
+    surfaceCutDepth: Number($("surfaceCutDepth")?.value || defaults.surfaceCutDepth),
+    columnX: Number($("columnX")?.value || defaults.columnX),
+    columnY: Number($("columnY")?.value || defaults.columnY),
+    columnsBelowCount: Number($("columnsBelowCount")?.value || defaults.columnsBelowCount),
+    transferLoadKn: Number($("transferLoadKn")?.value || defaults.transferLoadKn),
     rebarSchedule,
     topRebarLayers: rebarSchedule.top,
     bottomRebarLayers: rebarSchedule.bottom,
@@ -3616,6 +3912,7 @@ function drawSlabInputSection(ctx, canvas, input, title) {
   ctx.fillText("This 1000 mm strip preview is drawn directly from the per-metre layer inputs.", 36, 60);
 
   drawConcreteSectionShape(ctx, m, slabInput);
+  if (input.memberType === "twoWay") drawTransferSectionMarkers(ctx, m, slabInput);
   drawSlabLayerSchedule(ctx, m.webLeft, top, m.webW, m.h, slabInput, "top", "#126b63", false, true);
   drawSlabLayerSchedule(ctx, m.webLeft, top, m.webW, m.h, slabInput, "bottom", "#126b63", false, true);
   drawDimension(ctx, m.shapeLeft, top + m.h + 34, m.shapeLeft + m.totalW, top + m.h + 34, `${sectionOverallWidth(slabInput)} mm strip`);
@@ -3629,6 +3926,73 @@ function drawSlabInputSection(ctx, canvas, input, title) {
     ["Bottom As", `${scheduledReoForFace(input, "bottom").as.toFixed(0)} mm2/m`],
     ["Layer count", `${currentLayerCount()} per face`],
   ]);
+}
+
+function drawGeometry3dPreview(input) {
+  const canvas = $("geometry3dCanvas");
+  if (!canvas?.getContext) return;
+  const ctx = canvas.getContext("2d");
+  clear(ctx, canvas);
+  const m = sectionCanvasMetrics(input.memberType === "beam" ? input : { ...input, b: 1000 }, 520, 185, 140, 92);
+  const depthOffset = { x: 92, y: -44 };
+  const left = m.shapeLeft;
+  const top = m.top;
+  const w = m.totalW;
+  const h = m.h;
+
+  ctx.fillStyle = "#17211d";
+  ctx.font = "18px system-ui";
+  ctx.fillText("3D concrete section geometry editor", 36, 36);
+  ctx.font = "13px system-ui";
+  ctx.fillStyle = "#60706a";
+  ctx.fillText("Click upper half to set a top cut; click lower half to set a bottom cut. Inputs remain editable at left.", 36, 58);
+
+  ctx.save();
+  ctx.translate(0, 20);
+  ctx.fillStyle = "#dfe7ef";
+  ctx.strokeStyle = "#9aa7b6";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left + depthOffset.x, top + depthOffset.y);
+  ctx.lineTo(left + w + depthOffset.x, top + depthOffset.y);
+  ctx.lineTo(left + w, top);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#c8d3df";
+  ctx.beginPath();
+  ctx.moveTo(left + w, top);
+  ctx.lineTo(left + w + depthOffset.x, top + depthOffset.y);
+  ctx.lineTo(left + w + depthOffset.x, top + h + depthOffset.y);
+  ctx.lineTo(left + w, top + h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  drawConcreteSectionShape(ctx, { ...m, top }, input);
+  ctx.restore();
+
+  const props = sectionProperties(input);
+  drawSectionNotes(ctx, 760, 92, [
+    ["Gross area", `${props.area.toFixed(0)} mm2`],
+    ["Centroid from top", `${props.centroid.toFixed(1)} mm`],
+    ["Gross inertia", `${props.inertia.toExponential(3)} mm4`],
+    ["Surface cut", input.surfaceCutEnabled ? `${normaliseSurfaceCutFace(input.surfaceCutFace)} ${surfaceCutDepth(input).toFixed(0)} mm` : "none"],
+    ["3D editor", "click top/bottom half to adjust cut depth"],
+  ]);
+}
+
+function handleGeometryCanvasPointer(event) {
+  const canvas = event.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+  const D = Number($("depth")?.value || defaults.depth);
+  const cutDepth = clamp(Math.round(Math.abs(y - canvas.height / 2) / 5) * 5, 0, Math.max(0, D - 40));
+  if ($("surfaceCutEnabled")) $("surfaceCutEnabled").checked = true;
+  if ($("surfaceCutFace")) $("surfaceCutFace").value = y < canvas.height / 2 ? "top" : "bottom";
+  if ($("surfaceCutDepth")) $("surfaceCutDepth").value = cutDepth.toFixed(0);
+  drawInputSectionPreview();
+  safeRun();
 }
 
 function drawBeamSection(ctx, canvas) {
@@ -3688,6 +4052,7 @@ function drawSlabSection(ctx, canvas, input, row, title) {
   ctx.fillText("Section is drawn as a 1000 mm design strip; top and bottom bars come from the input layer schedule.", 36, 60);
 
   drawConcreteSectionShape(ctx, m, slabInput);
+  if (input.memberType === "twoWay") drawTransferSectionMarkers(ctx, m, slabInput);
   drawSlabLayerSchedule(ctx, m.webLeft, top, m.webW, m.h, slabInput, "top", face === "top" ? "#126b63" : "#60706a", face !== "top");
   drawSlabLayerSchedule(ctx, m.webLeft, top, m.webW, m.h, slabInput, "bottom", face === "bottom" ? "#126b63" : "#60706a", face !== "bottom");
   if (secondary) drawDistributionBars(ctx, m.webLeft, top, m.webW, m.h, slabInput, secondary, face === "top" ? "bottom" : "top");
@@ -3738,6 +4103,7 @@ function drawConcreteSectionShape(ctx, metrics, input) {
     ctx.strokeRect(metrics.shapeLeft, flangeY, metrics.totalW, tf);
     ctx.fillStyle = "rgba(10,132,255,0.08)";
     ctx.fillRect(metrics.shapeLeft, flangeY, metrics.totalW, tf);
+    drawSurfaceCutOverlay(ctx, metrics, input);
     return;
   }
   drawConcreteSection(ctx, metrics.webLeft, metrics.top, metrics.webW, metrics.h);
@@ -3749,6 +4115,7 @@ function drawConcreteSectionShape(ctx, metrics, input) {
     ctx.strokeRect(metrics.webLeft - 8, metrics.top - 8, metrics.webW + 16, metrics.h + 16);
     ctx.restore();
   }
+  drawSurfaceCutOverlay(ctx, metrics, input);
 }
 
 function drawConcreteSection(ctx, left, top, w, h) {
@@ -3757,6 +4124,55 @@ function drawConcreteSection(ctx, left, top, w, h) {
   ctx.lineWidth = 2;
   ctx.fillRect(left, top, w, h);
   ctx.strokeRect(left, top, w, h);
+}
+
+function drawSurfaceCutOverlay(ctx, metrics, input) {
+  const cut = surfaceCutDepth(input);
+  if (cut <= 0) return;
+  const cutPx = cut * metrics.scale;
+  const y = normaliseSurfaceCutFace(input.surfaceCutFace) === "top" ? metrics.top : metrics.top + metrics.h - cutPx;
+  ctx.save();
+  ctx.fillStyle = "rgba(189,91,50,0.13)";
+  ctx.strokeStyle = "#bd5b32";
+  ctx.setLineDash([7, 5]);
+  ctx.fillRect(metrics.shapeLeft, y, metrics.totalW, cutPx);
+  ctx.strokeRect(metrics.shapeLeft, y, metrics.totalW, cutPx);
+  ctx.fillStyle = "#bd5b32";
+  ctx.font = "11px system-ui";
+  ctx.fillText(`${normaliseSurfaceCutFace(input.surfaceCutFace)} cut ${cut.toFixed(0)} mm`, metrics.shapeLeft + 8, y + Math.max(14, cutPx / 2));
+  ctx.restore();
+}
+
+function drawTransferSectionMarkers(ctx, metrics, input) {
+  if (!input || (input.transferLoadKn || 0) <= 0) return;
+  const x = metrics.webLeft + metrics.webW / 2;
+  const top = metrics.top;
+  const bottom = metrics.top + metrics.h;
+  ctx.save();
+  ctx.strokeStyle = "#bd5b32";
+  ctx.fillStyle = "#bd5b32";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, top - 42);
+  ctx.lineTo(x, top - 8);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 6, top - 18);
+  ctx.lineTo(x, top - 6);
+  ctx.lineTo(x + 6, top - 18);
+  ctx.stroke();
+  ctx.font = "11px system-ui";
+  ctx.fillText(`transfer ${input.transferLoadKn.toFixed(0)} kN`, x + 12, top - 28);
+  const colCount = Math.max(1, Math.round(input.columnsBelowCount || 1));
+  ctx.fillStyle = "rgba(96,112,106,0.18)";
+  ctx.strokeStyle = "#60706a";
+  const colW = Math.min(metrics.webW * 0.45, Math.max(28, (input.columnX || 450) * metrics.scale));
+  const colH = Math.max(26, Math.min(52, (input.columnY || 450) * metrics.scale * 0.25));
+  ctx.fillRect(x - colW / 2, bottom + 10, colW, colH);
+  ctx.strokeRect(x - colW / 2, bottom + 10, colW, colH);
+  ctx.fillStyle = "#60706a";
+  ctx.fillText(`${colCount} below column${colCount === 1 ? "" : "s"} shown`, x + colW / 2 + 10, bottom + 28);
+  ctx.restore();
 }
 
 function drawStirrupLoop(ctx, left, top, w, h, cover, diaPx) {
@@ -4053,7 +4469,7 @@ function drawTwoWayModel() {
   ctx.strokeRect(px, py, pw, ph);
   const colW = (input.columnX / 1000) * scale;
   const colH = (input.columnY / 1000) * scale;
-  drawTwoWayColumnStack(ctx, px, py, pw, ph, colW, colH);
+  drawTwoWayColumnStack(ctx, px, py, pw, ph, colW, colH, input, scale);
   ctx.fillStyle = "#60706a";
   ctx.fillRect(px + pw / 2 - colW / 2, py + ph / 2 - colH / 2, colW, colH);
   ctx.strokeStyle = "#126b63";
@@ -4067,6 +4483,7 @@ function drawTwoWayModel() {
   ctx.fillText(`Two-way slab panel ${input.panelX} m x ${input.panelY} m`, pad, 42);
   ctx.fillStyle = "#60706a";
   ctx.fillText(`Full-width equivalent frame strips plus ${input.plateGrid} x ${input.plateGrid} plate deflection grid, column fixity ${input.columnFixity.toFixed(0)}%`, pad, 68);
+  if (input.transferLoadKn > 0) drawTransferLoadPlan(ctx, px, py, pw, ph, input, scale);
   if (input.ptEnabled) {
     ctx.fillStyle = "#a16207";
     ctx.fillText(`PT tendon band: ${ptSummaryText(input)}`, pad, 94);
@@ -4074,11 +4491,28 @@ function drawTwoWayModel() {
   }
 }
 
-function drawTwoWayColumnStack(ctx, px, py, pw, ph, colW, colH) {
+function drawTwoWayColumnStack(ctx, px, py, pw, ph, colW, colH, input = null, scale = 1) {
   const cx = px + pw / 2;
   const cy = py + ph / 2;
   const x = cx - colW / 2;
   const y = cy - colH / 2;
+  if (input) {
+    belowColumnOffsets(input).forEach((offset, i) => {
+      const bx = cx + offset.x * scale - colW / 2;
+      const by = cy + offset.y * scale - colH / 2;
+      ctx.fillStyle = "rgba(96,112,106,0.18)";
+      ctx.fillRect(bx, by, colW, colH);
+      ctx.strokeStyle = "#60706a";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx, by, colW, colH);
+      drawColumnBarsPlan(ctx, bx, by, colW, colH);
+      if (i === 0) {
+        ctx.fillStyle = "#60706a";
+        ctx.font = "12px system-ui";
+        ctx.fillText(`${input.columnsBelowCount} column${input.columnsBelowCount === 1 ? "" : "s"} below`, bx + colW + 12, by + colH + 14);
+      }
+    });
+  }
   ctx.save();
   ctx.setLineDash([8, 5]);
   ctx.strokeStyle = "#415f91";
@@ -4096,6 +4530,41 @@ function drawTwoWayColumnStack(ctx, px, py, pw, ph, colW, colH) {
   ctx.fillText("column above", x + colW + 26, y - 5);
   ctx.fillStyle = "#60706a";
   ctx.fillText("column below", x + colW + 26, y + colH + 22);
+}
+
+function belowColumnOffsets(input) {
+  const count = Math.max(1, Math.min(9, Math.round(input.columnsBelowCount || 1)));
+  const sx = Math.max(0, Number(input.columnsBelowSpacingX || 0));
+  const sy = Math.max(0, Number(input.columnsBelowSpacingY || 0));
+  const layout = normaliseColumnsBelowLayout(input.columnsBelowLayout);
+  if (count === 1) return [{ x: 0, y: 0 }];
+  if (layout === "lineX") return Array.from({ length: count }, (_, i) => ({ x: (i - (count - 1) / 2) * sx, y: 0 }));
+  if (layout === "lineY") return Array.from({ length: count }, (_, i) => ({ x: 0, y: (i - (count - 1) / 2) * sy }));
+  const cols = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / cols);
+  return Array.from({ length: count }, (_, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    return { x: (col - (cols - 1) / 2) * sx, y: (row - (rows - 1) / 2) * sy };
+  });
+}
+
+function drawTransferLoadPlan(ctx, px, py, pw, ph, input, scale) {
+  const cx = px + pw / 2;
+  const cy = py + ph / 2;
+  const radius = Math.max(8, (input.transferFootprint / 1000) * scale / 2);
+  ctx.save();
+  ctx.fillStyle = "rgba(189,91,50,0.16)";
+  ctx.strokeStyle = "#bd5b32";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#bd5b32";
+  ctx.font = "13px system-ui";
+  ctx.fillText(`transfer ${input.transferLoadKn.toFixed(0)} kN`, cx + radius + 12, cy - 8);
+  ctx.restore();
 }
 
 function drawColumnBarsPlan(ctx, x, y, w, h) {
@@ -4229,11 +4698,12 @@ function drawPtInputPreview() {
   if (!canvas?.getContext) return;
   const ctx = canvas.getContext("2d");
   clear(ctx, canvas);
-  const memberType = $("memberType")?.value || defaults.memberType;
-  const D = Number($("depth")?.value || defaults.depth);
+  const preview = previewPtInputFromDom();
+  const memberType = preview.memberType;
+  const D = preview.D;
   const enabled = $("ptEnabled")?.checked;
-  const profile = ptProfileForInput();
-  const spans = memberType === "twoWay" ? [{ length: Number($("panelX")?.value || defaults.panelX) }] : state.spans;
+  const profile = { highPoints: preview.ptHighPoints, lowPoints: preview.ptLowPoints };
+  const spans = memberType === "twoWay" ? [{ length: preview.panelX }] : state.spans;
   const total = spans.reduce((sum, span) => sum + Number(span.length || 0), 0) || 1;
   const pad = 70;
   const top = 74;
@@ -4259,7 +4729,7 @@ function drawPtInputPreview() {
     const highA = profile.highPoints[i] ?? profile.highPoints[0] ?? defaultPtHighPoint();
     const highB = profile.highPoints[i + 1] ?? profile.highPoints[profile.highPoints.length - 1] ?? highA;
     const low = profile.lowPoints[i] ?? defaultPtLowPoint();
-    drawPtCurve(ctx, x1, x2, top, yScale, D, highA, highB, low);
+    drawPtCurve(ctx, x1, x2, top, yScale, D, highA, highB, low, preview);
     ctx.fillStyle = "#60706a";
     ctx.font = "12px system-ui";
     ctx.textAlign = "center";
@@ -4282,7 +4752,7 @@ function drawTwoWayPtProfile(ctx, px, py, pw, ph, input) {
   const low = input.ptLowPoints[0] || defaultPtLowPoint();
   const yScale = Math.min(0.7, ph / Math.max(input.D, 1));
   const baseY = py + ph / 2 - (input.D * yScale) / 2;
-  drawPtCurve(ctx, px, px + pw, baseY, yScale, input.D, highA, highB, low);
+  drawPtCurve(ctx, px, px + pw, baseY, yScale, input.D, highA, highB, low, input);
   ctx.fillStyle = "#a16207";
   ctx.font = "12px system-ui";
   ctx.fillText(`H ${highA.toFixed(0)} / ${highB.toFixed(0)} mm`, px + 10, baseY - 8);
@@ -4303,7 +4773,7 @@ function drawLinePtProfile(ctx, pad, beamY, xScale, input, supports) {
     const highA = input.ptHighPoints[i] || defaultPtHighPoint();
     const highB = input.ptHighPoints[i + 1] || highA;
     const low = input.ptLowPoints[i] || defaultPtLowPoint();
-    drawPtCurve(ctx, x1, x2, topY, yScale, input.D, highA, highB, low);
+    drawPtCurve(ctx, x1, x2, topY, yScale, input.D, highA, highB, low, input);
     ctx.fillStyle = "#a16207";
     ctx.font = "11px system-ui";
     ctx.textAlign = "center";
@@ -4319,16 +4789,14 @@ function drawLinePtProfile(ctx, pad, beamY, xScale, input, supports) {
   ctx.restore();
 }
 
-function drawPtCurve(ctx, x1, x2, topY, yScale, depth, highA, highB, low) {
+function drawPtCurve(ctx, x1, x2, topY, yScale, depth, highA, highB, low, input = {}) {
   ctx.save();
   ctx.strokeStyle = "#a16207";
   ctx.lineWidth = 3;
   ctx.beginPath();
   for (let j = 0; j <= 32; j++) {
     const r = j / 32;
-    const linear = highA + (highB - highA) * r;
-    const midLinear = (highA + highB) / 2;
-    const yFromTop = clamp(linear + 4 * (low - midLinear) * r * (1 - r), 0, depth);
+    const yFromTop = clamp(tendonProfilePoint(input, r, highA, highB, low), 0, depth);
     const x = x1 + (x2 - x1) * r;
     const y = topY + yFromTop * yScale;
     if (j === 0) ctx.moveTo(x, y);
@@ -4486,7 +4954,8 @@ function drawDownwardEnvelope(ctx, canvas, samples, key, pad, axisY, height, tit
   const total = Math.max(1e-9, samples[samples.length - 1].x);
   const max = Math.max(1, ...samples.map((sample) => Math.abs(sample[key] || 0)));
   const xScale = (canvas.width - 2 * pad) / total;
-  const yScale = height / max;
+  const viewScale = deflectionDiagramScale();
+  const yScale = (height / max) * viewScale;
   ctx.strokeStyle = "#d7ddd8";
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -4500,7 +4969,7 @@ function drawDownwardEnvelope(ctx, canvas, samples, key, pad, axisY, height, tit
   drawPolyline(ctx, samples, (s) => pad + s.x * xScale, (s) => axisY + Math.abs(s[key] || 0) * yScale, color);
   drawDownIndicator(ctx, canvas.width - pad - 70, axisY + 8);
   ctx.fillStyle = "#60706a";
-  ctx.fillText(`max downward ${max.toFixed(1)} mm`, pad, axisY + height + 28);
+  ctx.fillText(`max downward ${max.toFixed(1)} mm, view scale ${(viewScale * 100).toFixed(0)}%`, pad, axisY + height + 28);
 }
 
 function drawLimitDiagrams() {
@@ -4554,7 +5023,8 @@ function drawDeflectionLimitDiagram(ctx, canvas, samples, pad, axisY, height, ti
   const total = samples[samples.length - 1].x;
   const max = Math.max(1, ...samples.map((s) => Math.max(s.deflMm, s.limitMm)));
   const xScale = (canvas.width - 2 * pad) / total;
-  const yScale = height / max;
+  const viewScale = deflectionDiagramScale();
+  const yScale = (height / max) * viewScale;
   const ratio = state.result?.input?.deflectionRatio || "?";
   ctx.fillStyle = "#17211d";
   ctx.font = "15px system-ui";
@@ -4569,7 +5039,7 @@ function drawDeflectionLimitDiagram(ctx, canvas, samples, pad, axisY, height, ti
   drawPolyline(ctx, samples, (s) => pad + s.x * xScale, (s) => axisY + s.deflMm * yScale, color);
   drawDownIndicator(ctx, canvas.width - pad - 70, axisY + 8);
   ctx.fillStyle = "#60706a";
-  ctx.fillText(`demand max ${Math.max(...samples.map((s) => s.deflMm)).toFixed(1)} mm downward`, pad, axisY + height + 28);
+  ctx.fillText(`demand max ${Math.max(...samples.map((s) => s.deflMm)).toFixed(1)} mm downward, view ${(viewScale * 100).toFixed(0)}%`, pad, axisY + height + 28);
   ctx.fillText(`allowable deflection L/${ratio}`, pad + 250, axisY + height + 28);
 }
 
@@ -4577,7 +5047,8 @@ function drawDeflectionComparisonDiagram(ctx, canvas, samples, pad, axisY, heigh
   const total = Math.max(1e-9, samples[samples.length - 1].x);
   const max = Math.max(1, ...samples.map((s) => Math.max(s.shortMm, s.longMm, s.limitMm)));
   const xScale = (canvas.width - 2 * pad) / total;
-  const yScale = height / max;
+  const viewScale = deflectionDiagramScale();
+  const yScale = (height / max) * viewScale;
   const ratio = state.result?.input?.deflectionRatio || "?";
   ctx.fillStyle = "#17211d";
   ctx.font = "15px system-ui";
@@ -4594,7 +5065,7 @@ function drawDeflectionComparisonDiagram(ctx, canvas, samples, pad, axisY, heigh
   drawDeflectionLowPointMarkers(ctx, lowPoints, pad, axisY, height, xScale, yScale, longColor);
   drawDownIndicator(ctx, canvas.width - pad - 70, axisY + 8);
   ctx.fillStyle = "#60706a";
-  ctx.fillText(`short max ${Math.max(...samples.map((s) => s.shortMm)).toFixed(1)} mm downward`, pad, axisY + height + 28);
+  ctx.fillText(`short max ${Math.max(...samples.map((s) => s.shortMm)).toFixed(1)} mm downward, view ${(viewScale * 100).toFixed(0)}%`, pad, axisY + height + 28);
   ctx.fillStyle = longColor;
   ctx.fillText(`long max ${Math.max(...samples.map((s) => s.longMm)).toFixed(1)} mm downward`, pad + 230, axisY + height + 28);
   ctx.fillStyle = "#a16207";
@@ -4753,7 +5224,8 @@ function drawDownwardDiagram(ctx, canvas, samples, key, pad, axisY, height, titl
   const total = Math.max(1e-9, samples[samples.length - 1].x);
   const max = Math.max(0.001, ...samples.map((s) => Math.abs(s[key])));
   const xScale = (canvas.width - 2 * pad) / total;
-  const yScale = height / max;
+  const viewScale = deflectionDiagramScale();
+  const yScale = (height / max) * viewScale;
   const zeroY = axisY - height / 2;
   ctx.strokeStyle = "#d7ddd8";
   ctx.lineWidth = 1;
@@ -4778,7 +5250,12 @@ function drawDownwardDiagram(ctx, canvas, samples, key, pad, axisY, height, titl
   drawDownIndicator(ctx, canvas.width - pad - 70, zeroY + 8);
   ctx.fillStyle = "#60706a";
   ctx.fillText(`zero line = undeformed member`, pad, zeroY + height + 28);
-  ctx.fillText(`max downward ${max.toFixed(1)} mm`, canvas.width - pad - 170, zeroY - 18);
+  ctx.fillText(`max downward ${max.toFixed(1)} mm, view ${(viewScale * 100).toFixed(0)}%`, canvas.width - pad - 230, zeroY - 18);
+}
+
+function deflectionDiagramScale() {
+  const value = Number(state.result?.input?.deflectionViewScale ?? $("deflectionViewScale")?.value ?? defaults.deflectionViewScale);
+  return clamp(Number.isFinite(value) ? value : 1, 0.25, 3);
 }
 
 function drawSupport(ctx, x, y) {
