@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Advanced Concrete Design Tool 2026.05</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260520-ui-cleanup" />
   </head>
   <body>
     <header class="app-header">
@@ -27,6 +27,7 @@
       <button type="button" class="menu-action" data-view="report">Report</button>
       <button type="button" class="menu-action" data-view="messages">Help</button>
     </nav>
+    <div id="menuDropdown" class="menu-dropdown" hidden></div>
 
     <main class="workspace">
       <aside class="input-panel">
@@ -47,6 +48,7 @@
             <label>f'c (MPa)<input id="fc" type="number" min="20" step="5" /></label>
             <label>fsy (MPa)<input id="fsy" type="number" min="250" step="10" /></label>
             <label>Ec (MPa)<input id="ec" type="number" min="15000" step="500" /></label>
+            <label class="check inline-check"><input id="ecAuto" type="checkbox" /> Auto Ec from f'c</label>
             <label>FE elements/span<input id="elementsPerSpan" type="number" min="1" max="40" step="1" /></label>
             <label>Service section analysis
               <select id="sectionAnalysisMode">
@@ -68,7 +70,6 @@
         <section id="sectionGeometrySection">
           <div class="section-title">
             <h2>Section Geometry</h2>
-            <button id="saveGeometryBtn" type="button" title="Save current concrete section">Save</button>
           </div>
           <div class="grid two">
             <label>Section shape
@@ -76,20 +77,17 @@
                 <option value="rect">Rectangular section</option>
                 <option value="tTop">T section, flange up</option>
                 <option value="tBottom">T section, flange down</option>
-                <option value="irregular">Wet / irregular equivalent</option>
+                <option value="lTopLeft">L section, flange up left</option>
+                <option value="lTopRight">L section, flange up right</option>
+                <option value="lBottomLeft">L section, flange down left</option>
+                <option value="lBottomRight">L section, flange down right</option>
+                <option value="irregular">Irregular equivalent</option>
               </select>
             </label>
             <label>Flange width bf (mm)<input id="flangeWidth" type="number" min="100" step="25" /></label>
             <label>Flange thickness tf (mm)<input id="flangeThickness" type="number" min="0" step="5" /></label>
             <label>Equivalent area factor<input id="sectionAreaFactor" type="number" min="0.1" max="3" step="0.05" /></label>
             <label>Equivalent inertia factor<input id="sectionInertiaFactor" type="number" min="0.1" max="5" step="0.05" /></label>
-            <label>Geometry name<input id="geometryName" type="text" /></label>
-            <label>Saved geometry
-              <select id="geometryLibrarySelect"></select>
-            </label>
-            <label class="check inline-check"><input id="wetAreaEnabled" type="checkbox" /> Wet area load</label>
-            <label>Wet / ponding load (kPa)<input id="wetLoadKpa" type="number" min="0" step="0.1" /></label>
-            <label>Wet area (%)<input id="wetAreaPercent" type="number" min="0" max="100" step="5" /></label>
             <label class="check inline-check"><input id="surfaceCutEnabled" type="checkbox" /> Surface cut / rebate</label>
             <label>Cut face
               <select id="surfaceCutFace">
@@ -98,13 +96,8 @@
               </select>
             </label>
             <label>Cut depth (mm)<input id="surfaceCutDepth" type="number" min="0" step="5" /></label>
-          </div>
-          <div class="geometry-actions">
-            <button id="loadGeometryBtn" class="secondary" type="button">Load Geometry</button>
-            <span id="geometryLibraryStatus">No saved geometry loaded.</span>
-          </div>
-          <div class="canvas-wrap geometry-canvas">
-            <canvas id="geometry3dCanvas" width="1200" height="360"></canvas>
+            <label>Cut width (mm)<input id="surfaceCutWidth" type="number" min="0" step="25" /></label>
+            <label>Cut location from left (mm)<input id="surfaceCutOffset" type="number" min="0" step="25" /></label>
           </div>
         </section>
 
@@ -128,8 +121,10 @@
           <div class="ai-actions">
             <button id="aiProjectAdjustBtn" class="ai-button" type="button">AI Adjust Tool</button>
             <button id="aiAnalyzeProjectBtn" class="secondary" type="button">AI Analyze Project</button>
+            <button id="saveCalcLibraryBtn" type="button">Save Calc</button>
             <button id="exportProjectBtn" type="button">Export Job File</button>
             <button id="clearProjectBtn" type="button">Clear Job</button>
+            <button id="clearCalcLibraryBtn" type="button">Clear Calcs</button>
           </div>
           <div id="projectCheckList" class="project-check-list"></div>
           <div id="aiRecommendations" class="ai-recommendations">Save one or more span checks, then run project analysis.</div>
@@ -161,10 +156,26 @@
                 <option value="lineY">Line along Y</option>
               </select>
             </label>
+            <div class="span-editor two-way-span-editor">
+              <div class="span-editor-head">
+                <h3>X direction spans</h3>
+                <button id="addPanelXSpanBtn" type="button" title="Add X span">+</button>
+              </div>
+              <div id="panelXSpans" class="rows compact-rows"></div>
+            </div>
+            <div class="span-editor two-way-span-editor">
+              <div class="span-editor-head">
+                <h3>Y direction spans</h3>
+                <button id="addPanelYSpanBtn" type="button" title="Add Y span">+</button>
+              </div>
+              <div id="panelYSpans" class="rows compact-rows"></div>
+            </div>
             <label>Below column spacing X (m)<input id="columnsBelowSpacingX" type="number" min="0" step="0.1" /></label>
             <label>Below column spacing Y (m)<input id="columnsBelowSpacingY" type="number" min="0" step="0.1" /></label>
             <label>Transfer load at support (kN)<input id="transferLoadKn" type="number" min="0" step="10" /></label>
             <label>Transfer footprint dia. (mm)<input id="transferFootprint" type="number" min="100" step="25" /></label>
+            <label>Transfer X location (m)<input id="transferX" type="number" min="0" step="0.1" /></label>
+            <label>Transfer Y location (m)<input id="transferY" type="number" min="0" step="0.1" /></label>
           </div>
         </section>
 
@@ -196,7 +207,6 @@
                 <b id="topReoSummary">-</b>
               </div>
               <div id="topLayerRows" class="reo-layer-rows"></div>
-              <div id="topBarChips" class="bar-chip-grid"></div>
             </div>
             <div class="reo-group">
               <div class="reo-group-head">
@@ -207,12 +217,14 @@
                 <b id="bottomReoSummary">-</b>
               </div>
               <div id="bottomLayerRows" class="reo-layer-rows"></div>
-              <div id="bottomBarChips" class="bar-chip-grid"></div>
             </div>
           </div>
           <div class="grid two reo-settings">
             <label>Max slab spacing (mm)<input id="maxSpacing" type="number" min="100" step="25" /></label>
             <label>Number of layers per face<input id="layers" type="number" min="1" max="3" step="1" /></label>
+            <label data-beam-only="true">Shear lig diameter (mm)<input id="shearLigDia" type="number" min="6" step="1" /></label>
+            <label data-beam-only="true">Shear lig legs<input id="shearLigLegs" type="number" min="2" max="8" step="1" /></label>
+            <label data-beam-only="true">Shear lig spacing (mm)<input id="shearLigSpacing" type="number" min="50" step="25" /></label>
           </div>
           <div class="compat-inputs" hidden>
             <input id="topLayerBars" value="N16" />
@@ -253,7 +265,6 @@
         <section id="ptProfileSection">
           <div class="section-title">
             <h2>PT Tendon Section Profile</h2>
-            <button id="ptAutoProfileBtn" type="button">Auto Drape</button>
           </div>
           <div class="grid two">
             <label>Profile datum
@@ -277,11 +288,11 @@
             <h3>Tendon High / Low Points</h3>
             <span id="ptProfileHint">High points are over supports; low points are near span sag points. Values follow the selected datum.</span>
           </div>
+          <div class="pt-tool-actions">
+            <button id="ptAutoProfileBtn" type="button">Auto Drape</button>
+          </div>
           <div id="ptProfileRows" class="pt-profile-grid"></div>
           <div id="ptProfileSummary" class="pt-profile-summary"></div>
-          <div class="canvas-wrap pt-profile-canvas">
-            <canvas id="ptProfileCanvas" width="1200" height="360"></canvas>
-          </div>
         </section>
 
         <section id="deflectionParameterSection">
@@ -302,15 +313,6 @@
             <label>Thermal coeff. (microstrain/deg C)<input id="thermalCoeff" type="number" min="0" step="0.5" /></label>
             <label>Temperature restraint (%)<input id="temperatureRestraint" type="number" min="0" max="100" step="5" /></label>
             <label>Humidity / drying factor<input id="humidityFactor" type="number" min="0.2" max="2" step="0.05" /></label>
-            <label>Deflection diagram zoom
-              <select id="deflectionViewScale">
-                <option value="0.35">Zoom out 35%</option>
-                <option value="0.5">Zoom out 50%</option>
-                <option value="0.75">Zoom out 75%</option>
-                <option value="1">Normal 100%</option>
-                <option value="1.5">Zoom in 150%</option>
-              </select>
-            </label>
           </div>
         </section>
 
@@ -355,14 +357,28 @@
 
         <div class="view active" id="view-model">
           <div class="output-layout">
-            <aside class="result-tree" id="resultTree"></aside>
             <div>
           <div id="designStatus" class="status-banner"></div>
-          <div class="canvas-wrap">
+          <div class="canvas-wrap model-canvas-wrap">
             <canvas id="modelCanvas" width="1200" height="520"></canvas>
+          </div>
+          <div class="model-subhead">
+            <h3>PT Tendon Profile</h3>
+            <span>Large editable tendon diagram, linked to the post-tensioning controls</span>
+          </div>
+          <div class="canvas-wrap pt-profile-canvas model-pt-canvas">
+            <canvas id="ptProfileCanvas" width="1400" height="620"></canvas>
+          </div>
+          <div class="model-subhead">
+            <h3>3D Section Geometry</h3>
+            <span>Large editable concrete section model</span>
+          </div>
+          <div class="canvas-wrap geometry-canvas model-geometry-canvas">
+            <canvas id="geometry3dCanvas" width="1400" height="720"></canvas>
           </div>
           <div class="summary-grid" id="summary"></div>
             </div>
+            <aside class="result-tree" id="resultTree" hidden></aside>
           </div>
         </div>
 
@@ -371,6 +387,9 @@
         </div>
 
         <div class="view" id="view-loads">
+          <div class="canvas-wrap loads-canvas">
+            <canvas id="loadCanvas" width="1200" height="420"></canvas>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -433,7 +452,7 @@
                   <th>Zone</th>
                   <th>Location</th>
                   <th>Mu*</th>
-                  <th>φMu</th>
+                  <th>Ï†Mu</th>
                   <th>As req.</th>
                   <th>Provided</th>
                   <th>Util.</th>
@@ -456,6 +475,15 @@
       Uses an advanced equivalent frame/design-strip FE workflow with strip, deflection and support-shear checks for engineering review, not certification.
     </footer>
 
-    <script src="app.js?v=20260519-pt-geometry"></script>
+    <script>
+      window.addEventListener("error", (event) => {
+        const status = document.getElementById("designStatus");
+        if (!status) return;
+        status.className = "status-banner fail";
+        status.innerHTML = `<div class="status-mark">ERROR</div><div class="status-copy"><b>Application script error.</b><span>${event.message}</span></div>`;
+      });
+    </script>
+    <script src="app.js?v=20260520-ui-cleanup2"></script>
+    <script src="ui-fixes.js?v=20260520-ui-cleanup"></script>
   </body>
 </html>
