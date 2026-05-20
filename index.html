@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Advanced Concrete Design Tool 2026.05</title>
     <link rel="stylesheet" href="styles.css?v=20260520-ui-cleanup" />
+    <link rel="stylesheet" href="model-cleanup.css?v=20260520-model-cleanup" />
   </head>
   <body>
     <header class="app-header">
@@ -21,7 +22,7 @@
       <button type="button" class="menu-command" data-menu-command="file">File</button>
       <button type="button" class="menu-command" data-menu-command="edit">Edit</button>
       <button type="button" class="menu-command" data-menu-command="view">View</button>
-      <button type="button" class="menu-action" data-view="loads">Input</button>
+      <button type="button" class="menu-command" data-menu-command="input">Input</button>
       <button type="button" id="calculateBtn">Calculate</button>
       <button type="button" class="menu-action" data-view="actions">Results</button>
       <button type="button" class="menu-action" data-view="report">Report</button>
@@ -49,7 +50,7 @@
             <label>fsy (MPa)<input id="fsy" type="number" min="250" step="10" /></label>
             <label>Ec (MPa)<input id="ec" type="number" min="15000" step="500" /></label>
             <label class="check inline-check"><input id="ecAuto" type="checkbox" /> Auto Ec from f'c</label>
-            <label>FE elements/span<input id="elementsPerSpan" type="number" min="1" max="40" step="1" /></label>
+            <label class="compat-control">FE elements/span<input id="elementsPerSpan" type="number" min="1" max="40" step="1" /></label>
             <label>Service section analysis
               <select id="sectionAnalysisMode">
                 <option value="uncracked">Uncracked transformed section</option>
@@ -58,9 +59,10 @@
             </label>
             <label>Column/slab fixity (%)<input id="columnFixity" type="number" min="0" max="100" step="5" /></label>
             <label>Deflection check L/<input id="deflectionRatio" type="number" min="100" step="10" /></label>
-            <label>Compression stress check<input id="stressCompFactor" type="number" min="0.1" step="0.05" /></label>
-            <label>Tension stress check<input id="stressTensFactor" type="number" min="0" step="0.05" /></label>
+            <label class="compat-control">Compression stress check<input id="stressCompFactor" type="number" min="0.1" step="0.05" /></label>
+            <label class="compat-control">Tension stress check<input id="stressTensFactor" type="number" min="0" step="0.05" /></label>
           </div>
+          <label class="check pt-member-toggle"><input id="ptEnabled" type="checkbox" /> Include post-tensioning tendons</label>
           <label class="check"><input id="selfWeight" type="checkbox" /> Include concrete self-weight at 24 kN/m3</label>
           <div class="member-actions">
             <span id="memberContextLabel">Two-way slab panel design</span>
@@ -140,14 +142,14 @@
             </select>
           </div>
           <div class="grid two">
-            <label>Panel Lx (m)<input id="panelX" type="number" min="1" step="0.1" /></label>
-            <label>Panel Ly (m)<input id="panelY" type="number" min="1" step="0.1" /></label>
+            <label>X design length (m)<input id="panelX" type="number" min="1" step="0.1" /></label>
+            <label>Design strip width (m)<input id="panelY" type="number" min="1" step="0.1" /></label>
             <label>Superimposed G (kPa)<input id="areaG" type="number" min="0" step="0.1" /></label>
             <label>Live Q (kPa)<input id="areaQ" type="number" min="0" step="0.1" /></label>
             <label>Column x (mm)<input id="columnX" type="number" min="100" step="25" /></label>
             <label>Column y (mm)<input id="columnY" type="number" min="100" step="25" /></label>
             <label>Column strip %<input id="columnStripPercent" type="number" min="20" max="80" step="5" /></label>
-            <label>Plate grid<input id="plateGrid" type="number" min="8" max="32" step="2" /></label>
+            <label class="compat-control">Plate grid<input id="plateGrid" type="number" min="8" max="32" step="2" /></label>
             <label>Columns below count<input id="columnsBelowCount" type="number" min="1" max="9" step="1" /></label>
             <label>Below column layout
               <select id="columnsBelowLayout">
@@ -156,14 +158,14 @@
                 <option value="lineY">Line along Y</option>
               </select>
             </label>
-            <div class="span-editor two-way-span-editor">
+            <div class="span-editor two-way-span-editor two-way-x-editor">
               <div class="span-editor-head">
                 <h3>X direction spans</h3>
                 <button id="addPanelXSpanBtn" type="button" title="Add X span">+</button>
               </div>
               <div id="panelXSpans" class="rows compact-rows"></div>
             </div>
-            <div class="span-editor two-way-span-editor">
+            <div class="span-editor two-way-span-editor compat-control two-way-y-editor">
               <div class="span-editor-head">
                 <h3>Y direction spans</h3>
                 <button id="addPanelYSpanBtn" type="button" title="Add Y span">+</button>
@@ -241,7 +243,7 @@
           <div class="section-title">
             <h2>Post-Tensioning Force</h2>
           </div>
-          <label class="check"><input id="ptEnabled" type="checkbox" /> Include post-tensioning tendons</label>
+          <div class="pt-enabled-placeholder"></div>
           <div class="grid two">
             <label>Force input method
               <select id="ptForceMode">
@@ -357,10 +359,13 @@
 
         <div class="view active" id="view-model">
           <div class="output-layout">
-            <div>
+            <div class="model-main-column">
           <div id="designStatus" class="status-banner"></div>
-          <div class="canvas-wrap model-canvas-wrap">
-            <canvas id="modelCanvas" width="1200" height="520"></canvas>
+          <div class="model-overview-grid">
+            <div class="canvas-wrap model-canvas-wrap">
+              <canvas id="modelCanvas" width="1400" height="660"></canvas>
+            </div>
+            <aside id="modelInfoPanel" class="model-info-panel"></aside>
           </div>
           <div class="model-subhead">
             <h3>PT Tendon Profile</h3>
@@ -452,7 +457,7 @@
                   <th>Zone</th>
                   <th>Location</th>
                   <th>Mu*</th>
-                  <th>Ï†Mu</th>
+                  <th>phi Mu</th>
                   <th>As req.</th>
                   <th>Provided</th>
                   <th>Util.</th>
@@ -485,5 +490,6 @@
     </script>
     <script src="app.js?v=20260520-ui-cleanup2"></script>
     <script src="ui-fixes.js?v=20260520-ui-cleanup"></script>
+    <script src="model-cleanup.js?v=20260520-model-cleanup"></script>
   </body>
 </html>
