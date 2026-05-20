@@ -1,0 +1,150 @@
+.compat-control {
+  display: none !important;
+}
+
+.pt-member-toggle {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(10, 132, 255, 0.18);
+  border-radius: 8px;
+  background: #f7fbff;
+}
+
+.model-main-column {
+  min-width: 0;
+}
+
+.model-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.8fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.model-info-panel,
+.punching-shear-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfdff;
+}
+
+.model-info-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.model-info-panel h3,
+.punching-shear-panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.model-info-list {
+  display: grid;
+  gap: 8px;
+}
+
+.model-info-row {
+  display: grid;
+  grid-template-columns: minmax(105px, 0.42fr) minmax(0, 1fr);
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid rgba(223, 229, 238, 0.86);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.model-info-row span,
+.punching-shear-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.model-info-row b {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.model-info-note {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.punching-shear-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.punching-shear-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.punching-shear-grid div {
+  padding: 10px;
+  border: 1px solid rgba(223, 229, 238, 0.86);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.punching-shear-grid span {
+  display: block;
+}
+
+.punching-shear-grid b {
+  display: block;
+  margin-top: 4px;
+  font-size: 16px;
+}
+
+body:not(.pt-enabled) #ptProfileSection,
+body:not(.pt-enabled) #postTensioningSection,
+body:not(.pt-enabled) .model-pt-canvas,
+body:not(.pt-enabled) .model-pt-heading {
+  display: none !important;
+}
+
+.right-side-diagram {
+  margin-top: 0;
+  min-height: 380px;
+}
+
+.input-category-panel {
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 24px));
+}
+
+.input-category-panel button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  width: 100%;
+}
+
+.input-category-panel small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.model-subhead.model-pt-heading {
+  margin-top: 18px;
+}
+
+@media (max-width: 900px) {
+  .model-overview-grid,
+  .punching-shear-grid {
+    grid-template-columns: 1fr;
+  }
+}
