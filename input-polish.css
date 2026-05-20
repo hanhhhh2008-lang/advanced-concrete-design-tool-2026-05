@@ -1,0 +1,142 @@
+.input-panel,
+.input-panel * {
+  min-width: 0;
+}
+
+.input-panel label,
+.input-panel .section-hint,
+.input-panel .line-transfer-note,
+.input-panel .fixity-heading span,
+.input-panel .member-actions span,
+.input-panel .pt-profile-heading span,
+.input-panel .pt-profile-summary,
+.input-panel .reo-group span,
+.input-panel .project-check-item span,
+.input-panel .ai-recommendations,
+.input-panel .workflow-tree {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.35;
+}
+
+.input-panel input,
+.input-panel select,
+.input-panel textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.input-panel button {
+  max-width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+.input-panel .grid.two,
+.input-panel .combo-selects,
+.input-panel .support-fixity-grid,
+.input-panel .pt-profile-grid,
+.input-panel .pt-profile-summary,
+.input-panel .ai-actions,
+.input-panel .reo-settings {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.input-panel .section-title {
+  align-items: start;
+}
+
+.input-panel .section-title h2 {
+  overflow-wrap: anywhere;
+}
+
+.input-panel .section-title select,
+.input-panel .section-title button {
+  flex: 1 1 150px;
+  width: auto;
+}
+
+.input-panel .check {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.span-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(34px, auto);
+}
+
+.span-row button {
+  width: 100%;
+  min-width: 34px;
+}
+
+.compact-span-row {
+  grid-template-columns: minmax(0, 1fr) minmax(34px, auto);
+}
+
+.reo-group-head {
+  min-width: 0;
+}
+
+.reo-group-head > div {
+  min-width: 0;
+}
+
+.reo-group-head b {
+  min-width: 0;
+  max-width: 45%;
+  overflow-wrap: anywhere;
+}
+
+.reo-layer-row {
+  grid-template-columns: minmax(48px, 0.55fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.input-category-panel {
+  width: min(380px, calc(100vw - 24px));
+}
+
+.input-category-panel button {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.input-category-panel small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .input-panel .grid.two,
+  .input-panel .combo-selects,
+  .input-panel .support-fixity-grid,
+  .input-panel .pt-profile-grid,
+  .input-panel .pt-profile-summary,
+  .input-panel .ai-actions,
+  .input-panel .reo-settings,
+  .span-row,
+  .compact-span-row,
+  .reo-layer-row {
+    grid-template-columns: 1fr;
+  }
+
+  .input-panel .section-title {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .input-panel .section-title select,
+  .input-panel .section-title button,
+  .reo-group-head b {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .reo-group-head {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}
