@@ -33,6 +33,7 @@
       (async function loadLatestRevision() {
         const response = await fetch("latest-revision-20260521-v4.html?base=no-model-jump", { cache: "no-store" });
         const html = await response.text();
+        const fixedHtml = html.replace("parsed.scripts.forEach(s=>s.remove());", "[...parsed.scripts].forEach(s=>s.remove());");
         const injection = `<script>
           (function installNoModelJumpPatch() {
             function activeView() {
@@ -65,7 +66,7 @@
           })();
         <\/script>`;
         document.open();
-        document.write(html.replace("</body>", injection + "</body>"));
+        document.write(fixedHtml.replace("</body>", injection + "</body>"));
         document.close();
       })().catch(function showLoadError(error) {
         document.body.innerHTML = '<div class="loading"><div><b>Could not load latest revision.</b><br>' + String(error) + "</div></div>";
