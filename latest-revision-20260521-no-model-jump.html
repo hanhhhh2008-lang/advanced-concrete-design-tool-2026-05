@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Advanced Concrete Design Tool - Latest no model jump</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #f4f7f5;
+        color: #17211d;
+        font-family: system-ui, Segoe UI, Arial, sans-serif;
+      }
+      .loading {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        text-align: center;
+      }
+      .loading b {
+        color: #126b63;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="loading">
+      <div><b>Loading latest revision...</b><br />Run Analysis will keep the current panel open.</div>
+    </div>
+    <script>
+      (async function loadLatestRevision() {
+        const response = await fetch("latest-revision-20260521-v4.html?base=no-model-jump", { cache: "no-store" });
+        const html = await response.text();
+        const injection = `<script>
+          (function installNoModelJumpPatch() {
+            function activeView() {
+              return document.querySelector(".tab.active")?.dataset.view || document.querySelector(".view.active")?.id?.replace(/^view-/, "") || "model";
+            }
+            function install() {
+              const button = document.getElementById("runAnalysisBtn");
+              if (!button || button.dataset.noModelJumpPatch === "1") return Boolean(button);
+              button.dataset.noModelJumpPatch = "1";
+              button.addEventListener(
+                "click",
+                function keepCurrentPanel(event) {
+                  const view = activeView();
+                  event.preventDefault();
+                  event.stopImmediatePropagation();
+                  if (typeof safeRun === "function") safeRun();
+                  if (view && typeof switchTab === "function") switchTab(view);
+                },
+                true
+              );
+              window.__noModelJumpPatchReady = true;
+              return true;
+            }
+            let attempts = 0;
+            const timer = setInterval(function waitForApp() {
+              attempts += 1;
+              if (install() || attempts > 200) clearInterval(timer);
+            }, 100);
+            install();
+          })();
+        <\/script>`;
+        document.open();
+        document.write(html.replace("</body>", injection + "</body>"));
+        document.close();
+      })().catch(function showLoadError(error) {
+        document.body.innerHTML = '<div class="loading"><div><b>Could not load latest revision.</b><br>' + String(error) + "</div></div>";
+      });
+    </script>
+  </body>
+</html>
