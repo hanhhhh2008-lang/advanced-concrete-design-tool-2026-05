@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Advanced Concrete Design Tool - Review Build</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #f4f7f5; }
+    #app { width: 100vw; height: 100vh; border: 0; display: block; }
+    .loading { position: fixed; inset: 0; display: grid; place-items: center; font: 15px system-ui; color: #33443d; background: #f4f7f5; }
+  </style>
+</head>
+<body>
+  <div id="loading" class="loading">Loading review build...</div>
+  <iframe id="app" src="index.html?phone_review=20260521"></iframe>
+  <script>
+(function () {
+  const frame = document.getElementById('app');
+  const loading = document.getElementById('loading');
+  frame.addEventListener('load', injectPatch);
+
+  function injectPatch() {
+    const doc = frame.contentDocument;
+    if (!doc || doc.getElementById('analysisReviewPatch')) return;
+    const script = doc.createElement('script');
+    script.id = 'analysisReviewPatch';
+    script.textContent = '(' + patchApp.toString() + ')();';
+    doc.documentElement.appendChild(script);
+    setTimeout(() => { if (loading) loading.style.display = 'none'; }, 300);
+  }
+
+  function patchApp() {
+    if (window.__analysisReviewPatchStarted) return;
+    window.__analysisReviewPatchStarted = true;
+    const q = (id) => document.getElementById(id);
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) || 0));
+    const stateRef = () => { try { return state; } catch { return null; } };
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    injectStyles();
+    patchHelp();
+    patchTwoWayPrestress();
+    patchGeometry3d();
+    patchModel();
+    patchAutoDrape();
+    patchRunLoop();
+    if (typeof safeRun === 'function') setTimeout(() => safeRun(), 60);
+
+    function injectStyles() {
+      if (q('analysisReviewStyles')) return;
+      const style = document.createElement('style');
+      style.id = 'analysisReviewStyles';
+      style.textContent = `
+        .input-panel label, .input-panel h2, .input-panel h3, .section-title, .span-editor-head, .tab, .menu-bar button { min-width: 0; overflow-wrap: anywhere; word-break: normal; }
+        .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .grid.two label { display: grid; gap: 6px; align-content: start; }
+        .operation-manual { display: grid; gap: 14px; line-height: 1.48; color: #17211d; }
+        .operation-manual h2 { margin: 0; font-size: 22px; }
+        .operation-manual h3 { margin: 8px 0 0; font-size: 15px; }
+        .operation-manual p, .operation-manual li { font-size: 13px; color: #33443d; }
+        .operation-manual ul, .operation-manual ol { margin: 6px 0 0 18px; padding: 0; }
+        .operation-manual .manual-block { border: 1px solid rgba(23,33,29,.12); border-radius: 8px; background: #fff; padding: 12px 14px; }
+        #modelInfoPanel .analysis-review-card { margin-top: 10px; border-top: 1px solid rgba(23,33,29,.12); padding-top: 10px; }
+        #modelInfoPanel .analysis-review-card h3 { margin: 0 0 8px; font-size: 13px; color: #17211d; }
+        #modelInfoPanel .analysis-review-card div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid rgba(23,33,29,.07); }
+        #modelInfoPanel .analysis-review-card span { color: #60706a; }
+        #modelInfoPanel .analysis-review-card b { text-align: right; color: #17211d; font-weight: 650; }
+        canvas { max-width: 100%; }
+        @media (max-width: 900px) { .grid.two { grid-template-columns: 1fr; } .workspace { grid-template-columns: 1fr; } }
+      `;
+      document.head.appendChild(style);
+    }
+
+    function patchHelp() {
+      document.addEventListener('click', (event) => {
+        const btn = event.target.closest('button');
+        if (!btn) return;
+        const isHelp = btn.textContent.trim() === 'Help' || (btn.dataset.view === 'messages' && btn.classList.contains('menu-action'));
+        if (!isHelp) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showManual();
+      }, true);
+    }
+
+    function showManual() {
+      if (typeof setView === 'function') setView('messages');
+      const target = q('messageWindow');
+      if (!target) return;
+      target.innerHTML = `
+        <div class="operation-manual">
+          <div class="manual-block">
+            <h2>Operation Manual</h2>
+            <p>This program is a practical AS 3600 concrete design workbook for beams, one-way slab strips and two-way slab panels. The calculation logic follows the same spine used in PT design software: define geometry and materials, assign loads and restraints, set reinforcement and tendon layout, analyse actions and deflection, then review serviceability, strength, support shear and report output.</p>
+          </div>
+          <div class="manual-block">
+            <h3>1. Analysis Logic</h3>
+            <ol>
+              <li>Choose the member type and enter geometry, f'c, Ec, cover and reinforcement layers.</li>
+              <li>Define spans, supports/restraint, dead/live load and any transfer load location.</li>
+              <li>If post-tensioning is included, set effective P/A or tendon force, losses, profile high points over supports and low points near span midpoints.</li>
+              <li>The program converts tendon eccentricity into equivalent balanced load. High point, low point, P/A and losses therefore change the net load and deflection result.</li>
+              <li>Run Calculate to update the model panel, action diagrams, deflection checks, design checks and calculation report.</li>
+            </ol>
+          </div>
+          <div class="manual-block">
+            <h3>2. Two-Way Panel Workflow</h3>
+            <p>The two-way panel is treated as an X-direction design strip with column strip and middle strip behaviour. Enter X spans, design strip width, column size, support type and transfer load coordinates. The model panel shows span ticks, support columns, strip zones and the transfer-load marker.</p>
+          </div>
+          <div class="manual-block">
+            <h3>3. Post-Tensioning Checks</h3>
+            <p>The PT model uses effective force after losses, P/A stress and tendon sag between high and low control points. Auto Drape places high points near supports and low points near midspan using cover limits. Manual profile changes should be reviewed against slab thickness, duct cover, anchorage layout and constructability.</p>
+          </div>
+          <div class="manual-block">
+            <h3>4. Geometry Editor</h3>
+            <p>The 3D section preview extrudes the selected rectangular, T, L or irregular equivalent section. If a T or L shape visually looks rectangular, check that flange width is larger than web width and flange thickness is non-zero.</p>
+          </div>
+          <div class="manual-block">
+            <h3>5. Engineering Use</h3>
+            <p>This is a calculation aid, not a certified design package. Use the report as a transparent check sheet and verify final designs with the project standard, licensed engineering judgement, supplier tendon data and construction-stage requirements.</p>
+          </div>
+        </div>`;
+    }
+
+    function patchTwoWayPrestress() {
+      window.ptTwoWayBalancedLoad = function patchedTwoWayBalancedLoad(input) {
+        if (!input || !input.ptEnabled) return 0;
+        const P = typeof ptEffectiveForce === 'function' ? ptEffectiveForce(input) : Math.max(0, input.ptTargetPA || 0) * Math.max(input.Agross || 0, 0) / 1000;
+        if (!(P > 0)) return 0;
+        const st = stateRef();
+        const raw = input.twoWaySpansX || st?.twoWaySpansX || [{ length: input.panelX || 1 }];
+        const spans = raw.map(s => Number(s.length || s || 0)).filter(L => L > 0);
+        if (!spans.length) spans.push(Number(input.panelX || 1));
+        const highs = input.ptHighPoints || [];
+        const lows = input.ptLowPoints || [];
+        let weighted = 0, total = 0;
+        spans.forEach((L, i) => {
+          const highA = highs[i] ?? highs[0] ?? Math.max(25, Number(input.ptTopCover || 25));
+          const highB = highs[i + 1] ?? highs[highs.length - 1] ?? highA;
+          const low = lows[i] ?? lows[0] ?? Math.max(25, Number(input.D || 200) - Number(input.ptBottomCover || 25));
+          const sag = Math.max(0, (Number(low) - (Number(highA) + Number(highB)) / 2) / 1000);
+          const balanced = 8 * P * sag / Math.max(L * L, 1e-9);
+          weighted += balanced * L;
+          total += L;
+        });
+        return total > 0 ? weighted / total : 0;
+      };
+    }
+
+    function patchAutoDrape() {
+      if (typeof autoDrapePtProfile !== 'function') return;
+      const base = autoDrapePtProfile;
+      window.autoDrapePtProfile = function patchedAutoDrapePtProfile() {
+        if (typeof ensurePtProfile === 'function') ensurePtProfile();
+        const st = stateRef();
+        const D = Number(q('depth')?.value || st?.defaults?.depth || 200);
+        const duct = Math.max(0, Number(q('ptDuctDiameter')?.value || 0));
+        const high = Math.max(25 + duct / 2, Number(q('ptTopCover')?.value || 25) + duct / 2);
+        const low = Math.max(high, D - Math.max(25 + duct / 2, Number(q('ptBottomCover')?.value || 25) + duct / 2));
+        try {
+          if (st?.ptProfile) {
+            st.ptProfile.highPoints = st.ptProfile.highPoints.map(() => high);
+            st.ptProfile.lowPoints = st.ptProfile.lowPoints.map(() => low);
+          } else base();
+        } catch { base(); }
+        if (typeof renderPtProfile === 'function') renderPtProfile();
+        if (typeof safeRun === 'function') safeRun();
+      };
+    }
+
+    function patchGeometry3d() {
+      window.drawGeometry3dPreview = function patchedGeometry3dPreview(input) {
+        const canvas = q('geometry3dCanvas');
+        if (!canvas?.getContext || !input) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const D = Math.max(80, Number(input.D || 200));
+        const web = Math.max(100, Number(input.memberType === 'beam' ? input.b : 1000) || 1000);
+        const bf = Math.max(web, Number(input.flangeWidth || web));
+        const tf = clamp(input.flangeThickness || D * 0.25, 0, D);
+        const shape = input.sectionShape || 'rect';
+        const totalW = shape === 'rect' ? web : bf;
+        const poly = sectionPoly(shape, web, totalW, D, tf);
+        const scale = Math.min(760 / totalW, 390 / D);
+        const left = 110, top = 120, ox = 120, oy = -58;
+        const map = ([x, y], back = false) => [left + x * scale + (back ? ox : 0), top + y * scale + (back ? oy : 0)];
+
+        ctx.fillStyle = '#17211d'; ctx.font = '20px system-ui'; ctx.fillText('3D concrete section geometry editor', 36, 42);
+        ctx.fillStyle = '#60706a'; ctx.font = '13px system-ui'; ctx.fillText('Shape, flange direction, depth datums and surface cut are shown from the current inputs.', 36, 64);
+        drawPoly(ctx, poly.map(p => map(p, true)), '#dfe7ef', '#8ea0ad');
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i], b = poly[(i + 1) % poly.length];
+          drawPoly(ctx, [map(a, false), map(b, false), map(b, true), map(a, true)], '#c6d2dc', '#8ea0ad');
+        }
+        drawPoly(ctx, poly.map(p => map(p, false)), '#eef3f1', '#17211d', 2.2);
+        if (input.surfaceCutEnabled) drawSurfaceCut(ctx, left, top, scale, totalW, D, input);
+        drawDatums(ctx, left + totalW * scale + 48, top, D, scale);
+        drawBox(ctx, 910, 118, 360, 176, [
+          ['Section', labelShape(shape)], ['Web / flange', `${web.toFixed(0)} / ${totalW.toFixed(0)} mm`],
+          ['Depth / flange thk', `${D.toFixed(0)} / ${tf.toFixed(0)} mm`],
+          ['PT datums', `0, ${Math.round(D / 2)}, ${D.toFixed(0)} mm from top`],
+          ['Note', totalW <= web && shape !== 'rect' ? 'Increase flange width to see T/L projection' : 'Geometry matches selected shape']
+        ]);
+      };
+    }
+
+    function sectionPoly(shape, web, W, D, tf) {
+      const wl = (W - web) / 2, wr = wl + web;
+      if (shape === 'tTop') return [[0,0],[W,0],[W,tf],[wr,tf],[wr,D],[wl,D],[wl,tf],[0,tf]];
+      if (shape === 'tBottom') return [[wl,0],[wr,0],[wr,D-tf],[W,D-tf],[W,D],[0,D],[0,D-tf],[wl,D-tf]];
+      if (shape === 'lTopLeft') return [[0,0],[W,0],[W,tf],[web,tf],[web,D],[0,D]];
+      if (shape === 'lTopRight') return [[0,0],[W,0],[W,D],[W-web,D],[W-web,tf],[0,tf]];
+      if (shape === 'lBottomLeft') return [[0,0],[web,0],[web,D-tf],[W,D-tf],[W,D],[0,D]];
+      if (shape === 'lBottomRight') return [[W-web,0],[W,0],[W,D],[0,D],[0,D-tf],[W-web,D-tf]];
+      if (shape === 'irregular') return [[0,0],[W,0],[W,D*.82],[W*.76,D],[0,D],[W*.12,D*.55]];
+      return [[0,0],[web,0],[web,D],[0,D]];
+    }
+
+    function patchModel() {
+      const base = typeof drawModel === 'function' ? drawModel : null;
+      window.drawModel = function patchedDrawModel() {
+        const st = stateRef();
+        if (st?.result?.mode === 'twoWay') drawTwoWayModelReview(st.result.input);
+        else if (base) base();
+        updateModelInfoReview();
+      };
+    }
+
+    function drawTwoWayModelReview(input) {
+      const canvas = q('modelCanvas');
+      if (!canvas?.getContext) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const px = 90, py = 92, pw = 820, ph = 360;
+      const Lx = Number(input.panelX || 1), Ly = Number(input.panelY || 1);
+      ctx.fillStyle = '#17211d'; ctx.font = '20px system-ui'; ctx.fillText('Two-way panel model - X design strip', 36, 42);
+      ctx.fillStyle = '#60706a'; ctx.font = '13px system-ui'; ctx.fillText('Span, support, column strip, middle strip and transfer loading are separated from the text summary.', 36, 64);
+      ctx.fillStyle = '#f8faf9'; ctx.strokeStyle = '#17211d'; ctx.lineWidth = 2; ctx.fillRect(px, py, pw, ph); ctx.strokeRect(px, py, pw, ph);
+      const stripW = ph * clamp((input.columnStripPercent || 50) / 100, .2, .8);
+      ctx.fillStyle = 'rgba(18,107,99,.12)'; ctx.fillRect(px, py + (ph - stripW) / 2, pw, stripW);
+      label(ctx, 'column strip', px + 16, py + (ph - stripW) / 2 + 24, '#126b63');
+      label(ctx, 'middle strip zone', px + 16, py + ph - 20, '#60706a');
+      const spans = ((input.twoWaySpansX || stateRef()?.twoWaySpansX || [{length:Lx}]).map(s => Number(s.length || s || 0)).filter(Boolean));
+      const total = spans.reduce((a,b)=>a+b,0) || Lx;
+      let acc = 0;
+      [0, ...spans].forEach((L, i) => {
+        if (i) acc += L;
+        const x = px + pw * acc / total;
+        ctx.strokeStyle = '#33443d'; ctx.lineWidth = i === 0 || i === spans.length ? 3 : 2;
+        ctx.beginPath(); ctx.moveTo(x, py - 10); ctx.lineTo(x, py + ph + 10); ctx.stroke();
+        support(ctx, x, py + ph + 38, i + 1);
+      });
+      acc = 0; spans.forEach((L, i) => { const x1 = px + pw*acc/total, x2 = px + pw*(acc+L)/total; dim(ctx, x1, py + ph + 72, x2, `Span ${i+1}: ${L.toFixed(2)} m`); acc += L; });
+      const cx = px + pw / 2, cy = py + ph / 2;
+      ctx.fillStyle = '#17211d'; ctx.fillRect(cx - 18, cy - 18, 36, 36); label(ctx, 'support column', cx + 28, cy - 6, '#17211d');
+      if (Number(input.transferLoadKn) > 0) {
+        const tx = px + pw * clamp(input.transferX || Lx / 2, 0, Lx) / Lx;
+        const ty = py + ph * clamp(input.transferY || Ly / 2, 0, Ly) / Ly;
+        ctx.strokeStyle = '#bd5b32'; ctx.fillStyle = '#bd5b32'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(tx, ty - 74); ctx.lineTo(tx, ty - 12); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(tx - 8, ty - 22); ctx.lineTo(tx, ty - 8); ctx.lineTo(tx + 8, ty - 22); ctx.fill();
+        label(ctx, `transfer ${Number(input.transferLoadKn).toFixed(0)} kN`, tx + 12, ty - 54, '#bd5b32');
+        label(ctx, `x=${Number(input.transferX || 0).toFixed(2)} m, y=${Number(input.transferY || 0).toFixed(2)} m`, tx + 12, ty - 30, '#bd5b32');
+      }
+      const sy = 555, sx1 = 120, sx2 = canvas.width - 130;
+      ctx.strokeStyle = '#17211d'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(sx1, sy); ctx.lineTo(sx2, sy); ctx.stroke();
+      for (let x = sx1 + 28; x < sx2 - 10; x += 34) { ctx.strokeStyle = '#bd5b32'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, sy - 68); ctx.lineTo(x, sy - 18); ctx.stroke(); }
+      label(ctx, `G=${Number(input.areaG||0).toFixed(1)} kPa, Q=${Number(input.areaQ||0).toFixed(1)} kPa`, sx1, sy - 92, '#33443d');
+      if (input.ptEnabled) label(ctx, `PT active: P/A ${pa(input).toFixed(2)} MPa, balance ${window.ptTwoWayBalancedLoad(input).toFixed(2)} kPa`, sx1, sy + 46, '#a16207');
+    }
+
+    function updateModelInfoReview() {
+      const panel = q('modelInfoPanel');
+      const input = stateRef()?.result?.input;
+      if (!panel || !input) return;
+      q('analysisReviewInfo')?.remove();
+      const box = document.createElement('div'); box.id = 'analysisReviewInfo'; box.className = 'analysis-review-card';
+      const transfer = input.memberType === 'twoWay' ? `${Number(input.transferLoadKn||0).toFixed(0)} kN at ${Number(input.transferX||0).toFixed(2)}, ${Number(input.transferY||0).toFixed(2)} m` : `${Number(input.lineTransferLoadKn||0).toFixed(0)} kN at x=${Number(input.lineTransferX||0).toFixed(2)} m`;
+      const balance = input.ptEnabled ? (input.memberType === 'twoWay' ? window.ptTwoWayBalancedLoad(input) : Math.max(0, ...(input.spans||[]).map((_,i)=> typeof ptBalancedLoadForSpan === 'function' ? ptBalancedLoadForSpan(input,i) : 0))).toFixed(2) : 'off';
+      box.innerHTML = `<h3>Model Summary</h3>${row('Geometry', `${input.memberType}, ${Number(input.b||1000).toFixed(0)} x ${Number(input.D||0).toFixed(0)} mm`)}${row('Reinforcement', reoText(input))}${row('P/A stress', input.ptEnabled ? `${pa(input).toFixed(2)} MPa` : 'PT not included')}${row('PT deflection load', input.ptEnabled ? `${balance} ${input.memberType === 'twoWay' ? 'kPa' : 'kN/m'}` : 'off')}${row('Transfer load', transfer)}`;
+      panel.appendChild(box);
+    }
+
+    function patchRunLoop() {
+      if (typeof safeRun !== 'function' || safeRun.analysisReviewPatch) return;
+      const base = safeRun;
+      window.safeRun = function patchedSafeRun() { const out = base(); setTimeout(() => { try { updateModelInfoReview(); if (stateRef()?.result?.input && typeof drawGeometry3dPreview === 'function') drawGeometry3dPreview(stateRef().result.input); } catch {} }, 0); return out; };
+      window.safeRun.analysisReviewPatch = true;
+    }
+
+    function pa(input) { return typeof ptPAStress === 'function' ? ptPAStress(input) : (Math.max(0, input.ptTargetPA || 0)); }
+    function reoText(input) { try { return `top ${formatRebarLayerSchedule(input,'top')}; bottom ${formatRebarLayerSchedule(input,'bottom')}`; } catch { return 'top and bottom layer schedule'; } }
+    function row(a,b){ return `<div><span>${esc(a)}</span><b>${esc(b)}</b></div>`; }
+    function label(ctx, text, x, y, color) { ctx.font = '13px system-ui'; const w = ctx.measureText(text).width + 12; ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(x - 5, y - 15, w, 21); ctx.strokeStyle = 'rgba(96,112,106,.22)'; ctx.strokeRect(x - 5, y - 15, w, 21); ctx.fillStyle = color || '#17211d'; ctx.fillText(text, x, y); }
+    function support(ctx, x, y, n) { ctx.fillStyle = '#17211d'; ctx.fillRect(x - 13, y - 28, 26, 28); label(ctx, `S${n}`, x - 9, y + 16, '#17211d'); }
+    function dim(ctx, x1, y, x2, text) { ctx.strokeStyle = '#60706a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke(); label(ctx, text, (x1 + x2) / 2 - 45, y + 22, '#60706a'); }
+    function drawPoly(ctx, pts, fill, stroke, lw=1.5){ ctx.beginPath(); pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.closePath(); ctx.fillStyle=fill; ctx.fill(); ctx.strokeStyle=stroke; ctx.lineWidth=lw; ctx.stroke(); }
+    function drawSurfaceCut(ctx,left,top,scale,W,D,input){ const cw=clamp(input.surfaceCutWidth||0,0,W)*scale, off=clamp(input.surfaceCutOffset||0,0,W)*scale, cd=clamp(input.surfaceCutDepth||0,0,D)*scale; if(!(cw>0&&cd>0))return; const y=(input.surfaceCutFace==='bottom')?top+D*scale-cd:top; ctx.fillStyle='rgba(189,91,50,.22)'; ctx.strokeStyle='#bd5b32'; ctx.lineWidth=2; ctx.fillRect(left+off,y,cw,cd); ctx.strokeRect(left+off,y,cw,cd); }
+    function drawDatums(ctx,x,top,D,scale){ [['0 top',0],['mid depth',D/2],[`${D.toFixed(0)} full depth`,D]].forEach(([t,d])=>{ const y=top+d*scale; ctx.strokeStyle='rgba(96,112,106,.35)'; ctx.beginPath(); ctx.moveTo(x-28,y); ctx.lineTo(x+140,y); ctx.stroke(); label(ctx,t,x,y-5,'#60706a'); }); }
+    function drawBox(ctx,x,y,w,h,rows){ ctx.fillStyle='rgba(255,255,255,.94)'; ctx.strokeStyle='rgba(23,33,29,.15)'; ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h); ctx.font='13px system-ui'; rows.forEach((r,i)=>{ ctx.fillStyle='#60706a'; ctx.fillText(r[0],x+14,y+28+i*27); ctx.fillStyle='#17211d'; ctx.fillText(r[1],x+150,y+28+i*27); }); }
+    function labelShape(s){ return ({rect:'Rectangular',tTop:'T section, flange up',tBottom:'T section, flange down',lTopLeft:'L section, up left',lTopRight:'L section, up right',lBottomLeft:'L section, down left',lBottomRight:'L section, down right',irregular:'Irregular equivalent'}[s] || s); }
+  }
+})();
+  </script>
+</body>
+</html>
