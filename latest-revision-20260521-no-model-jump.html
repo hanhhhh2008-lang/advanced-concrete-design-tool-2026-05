@@ -31,15 +31,51 @@
     </div>
     <script>
       (async function loadLatestRevision() {
-        const response = await fetch("latest-revision-20260521-v4.html?base=no-model-jump", { cache: "no-store" });
+        const response = await fetch("latest-revision-20260521-v4.html?base=two-way-strip-fix", { cache: "no-store" });
         const html = await response.text();
         const fixedHtml = html.replace("parsed.scripts.forEach(s=>s.remove());", "[...parsed.scripts].forEach(s=>s.remove());");
         const injection = `<script>
-          (function installNoModelJumpPatch() {
+          (function installLatestTwoWayPatch() {
+            function appState() {
+              try { return state; } catch { return null; }
+            }
+            function id(name) {
+              return document.getElementById(name);
+            }
+            function toNumber(value, fallback) {
+              const n = Number(value);
+              return Number.isFinite(n) ? n : fallback;
+            }
+            function clampLocal(value, min, max) {
+              return Math.max(min, Math.min(max, Number(value) || 0));
+            }
+            function sumSpans(spans) {
+              return (spans || []).reduce(function (sum, span) { return sum + Math.max(0.5, Number(span) || 0.5); }, 0);
+            }
             function activeView() {
               return document.querySelector(".tab.active")?.dataset.view || document.querySelector(".view.active")?.id?.replace(/^view-/, "") || "model";
             }
-            function install() {
+            function syncTwoWayInputs() {
+              const st = appState();
+              const memberType = id("memberType")?.value || "twoWay";
+              if (!st || memberType !== "twoWay") return;
+              const xInput = id("panelX");
+              const yInput = id("panelY");
+              const widthInput = id("width");
+              const panelX = Math.max(0.5, toNumber(xInput?.value, 8));
+              const panelY = Math.max(0.5, toNumber(yInput?.value, 7));
+              if (!Array.isArray(st.twoWaySpansX) || !st.twoWaySpansX.length) st.twoWaySpansX = [panelX];
+              const current = sumSpans(st.twoWaySpansX);
+              if (st.twoWaySpansX.length === 1) {
+                st.twoWaySpansX = [panelX];
+              } else if (Math.abs(current - panelX) > 0.05) {
+                const scale = panelX / Math.max(current, 0.5);
+                st.twoWaySpansX = st.twoWaySpansX.map(function (span) { return Math.max(0.5, Number(span) * scale); });
+              }
+              st.twoWaySpansY = [panelY];
+              if (widthInput) widthInput.value = Math.round(panelY * 1000);
+            }
+            function patchNoModelJump() {
               const button = document.getElementById("runAnalysisBtn");
               if (!button || button.dataset.noModelJumpPatch === "1") return Boolean(button);
               button.dataset.noModelJumpPatch = "1";
@@ -56,6 +92,115 @@
               );
               window.__noModelJumpPatchReady = true;
               return true;
+            }
+            function patchTwoWayInputs() {
+              const st = appState();
+              if (!st || typeof readInputs !== "function") return false;
+              ["panelX", "panelY"].forEach(function (name) {
+                const el = id(name);
+                if (!el || el.dataset.twoWayStripFix === "1") return;
+                el.dataset.twoWayStripFix = "1";
+                ["input", "change"].forEach(function (eventName) {
+                  el.addEventListener(eventName, function () {
+                    syncTwoWayInputs();
+                    if (typeof safeRun === "function") safeRun();
+                  }, true);
+                });
+              });
+              syncTwoWayInputs();
+              if (!readInputs.twoWayStripWidthFix) {
+                const baseReadInputs = readInputs;
+                readInputs = function () {
+                  syncTwoWayInputs();
+                  const data = baseReadInputs.apply(this, arguments);
+                  if (data && data.memberType === "twoWay") {
+                    data.panelX = Math.max(0.5, toNumber(id("panelX")?.value, data.panelX || 8));
+                    data.panelY = Math.max(0.5, toNumber(id("panelY")?.value, data.panelY || 7));
+                    data.b = Math.round(data.panelY * 1000);
+                    data.designStripWidth = data.panelY;
+                    data.twoWaySpansX = (appState()?.twoWaySpansX || [data.panelX]).slice();
+                    if (typeof sectionProperties === "function") {
+                      data.sectionProperties = sectionProperties(data);
+                      data.Agross = data.sectionProperties.area;
+                      data.sectionCentroid = data.sectionProperties.centroid;
+                      data.Igross = data.sectionProperties.inertia;
+                    }
+                    if (typeof selfWeightAreaLoad === "function") data.selfWeightLoad = selfWeightAreaLoad(data);
+                    data.transferAreaLoad = Math.max(0, data.transferLoadKn || 0) / Math.max(data.panelX * data.panelY, 1e-9);
+                    if (typeof ptEffectiveForce === "function") data.ptEffectiveForce = ptEffectiveForce(data);
+                  }
+                  return data;
+                };
+                readInputs.twoWayStripWidthFix = true;
+              }
+              return true;
+            }
+            function patchTwoWayFlexure() {
+              if (typeof designTwoWayStrips !== "function" || designTwoWayStrips.twoWayLoadShareFix) return typeof designTwoWayStrips === "function";
+              designTwoWayStrips = function (input, wu, plate) {
+                const lx = Math.max(0.5, Number(input.panelX) || 0.5);
+                const ly = Math.max(0.5, Number(input.panelY) || 0.5);
+                const short = Math.min(lx, ly);
+                const long = Math.max(lx, ly);
+                const aspect = long / Math.max(short, 0.5);
+                const colFrac = clampLocal((input.columnStripPercent || 50) / 100, 0.2, 0.8);
+                const fixity = typeof connectionFixityRatio === "function" ? connectionFixityRatio(input) : clampLocal((input.columnFixity || 50) / 100, 0, 1);
+                const factors = typeof twoWayStripDistributionFactors === "function" ? twoWayStripDistributionFactors(fixity) : {
+                  columnNegative: 0.7,
+                  columnPositive: 0.6,
+                  middlePositive: 0.41,
+                  middleNegative: 0.21
+                };
+                const lx4 = Math.pow(lx, 4);
+                const ly4 = Math.pow(ly, 4);
+                const xShare = clampLocal(ly4 / Math.max(lx4 + ly4, 1e-9), 0.2, 1);
+                const totalMoment = typeof equivalentFrameStaticMoment === "function" ? equivalentFrameStaticMoment(wu * xShare, lx, ly) : (wu * xShare * ly * lx * lx) / 8;
+                const columnWidth = ly * colFrac;
+                const middleWidth = Math.max(ly - columnWidth, ly * 0.1);
+                const rows = [];
+                [
+                  { strip: "column strip", sign: "negative", frac: factors.columnNegative, width: columnWidth },
+                  { strip: "column strip", sign: "positive", frac: factors.columnPositive, width: columnWidth },
+                  { strip: "middle strip", sign: "positive", frac: factors.middlePositive, width: middleWidth },
+                  { strip: "middle strip", sign: "negative", frac: factors.middleNegative, width: middleWidth }
+                ].forEach(function (item) {
+                  const Mu = Math.abs((totalMoment * item.frac) / Math.max(item.width, 0.1));
+                  const stripInput = { ...input, memberType: "slab", b: 1000, d: input.d };
+                  const face = item.sign === "negative" ? "top" : "bottom";
+                  const phi = typeof flexurePhi === "function" ? flexurePhi(stripInput) : 0.85;
+                  const asReq = typeof requiredSteel === "function" ? requiredSteel(stripInput, Mu / phi, face) : 0;
+                  const provided = typeof chooseReo === "function" ? chooseReo(stripInput, asReq, face) : { text: "check reinforcement", as: 0 };
+                  const phiMu = typeof momentCapacity === "function" ? phi * momentCapacity(stripInput, provided.as || 0, face) : 0;
+                  rows.push({
+                    zone: "X " + item.strip,
+                    location: item.sign,
+                    face,
+                    Mu,
+                    phiMu,
+                    asReq,
+                    provided,
+                    util: phiMu > 0 ? Mu / phiMu : Infinity,
+                    deflection: (plate?.maxDeflectionM || 0) * 1000,
+                    limit: (short * 1000) / Math.max(input.deflectionRatio || 250, 1),
+                    deflectionOk: (plate?.maxDeflectionM || 0) * 1000 <= (short * 1000) / Math.max(input.deflectionRatio || 250, 1),
+                    check: "X-direction equivalent strip, " + item.width.toFixed(2) + " m " + item.strip + ", two-way load share " + (xShare * 100).toFixed(0) + "%, aspect " + aspect.toFixed(2)
+                  });
+                });
+                return rows;
+              };
+              designTwoWayStrips.twoWayLoadShareFix = true;
+              return true;
+            }
+            function install() {
+              const ok = patchNoModelJump();
+              const inputOk = patchTwoWayInputs();
+              const flexureOk = patchTwoWayFlexure();
+              if (inputOk && flexureOk) {
+                syncTwoWayInputs();
+                if (typeof safeRun === "function") safeRun();
+                window.__twoWayStripFlexureFixReady = true;
+              }
+              return ok && inputOk && flexureOk;
             }
             let attempts = 0;
             const timer = setInterval(function waitForApp() {
