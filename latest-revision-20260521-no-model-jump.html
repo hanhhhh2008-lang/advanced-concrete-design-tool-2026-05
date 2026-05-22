@@ -78,14 +78,26 @@
         const clampLocal = (value, min, max) => Math.max(min, Math.min(max, Number(value) || 0));
         const sumSpans = (spans) => (spans || []).reduce((sum, span) => sum + Math.max(0.5, Number(span) || 0.5), 0);
 
-        patchNoModelJump();
-        patchTwoWayInputs();
-        patchTwoWayFlexure();
-        patchTwoWayModel();
+        try {
+          patchNoModelJump();
+        } catch {}
+        try {
+          patchTwoWayInputs();
+        } catch {}
+        try {
+          patchTwoWayFlexure();
+        } catch {}
+        try {
+          patchTwoWayModel();
+        } catch {}
+        try {
+          patchPtProfileDepth();
+        } catch {}
         try {
           if (typeof safeRun === "function") safeRun();
         } catch {}
         window.__twoWayStripFlexureFixReady = true;
+        window.__ptDepthAlignmentFixReady = true;
 
         function activeView() {
           return document.querySelector(".tab.active")?.dataset.view || document.querySelector(".view.active")?.id?.replace(/^view-/, "") || "model";
@@ -225,6 +237,247 @@
           const lx4 = Math.pow(Math.max(lx, 0.5), 4);
           const ly4 = Math.pow(Math.max(ly, 0.5), 4);
           return clampLocal(ly4 / Math.max(lx4 + ly4, 1e-9), 0.2, 1);
+        }
+
+        function patchPtProfileDepth() {
+          if (typeof drawPtInputPreview !== "function" || drawPtInputPreview.ptDepthAlignmentFix) return;
+          drawPtInputPreview = function () {
+            drawAlignedPtProfile();
+          };
+          drawPtInputPreview.ptDepthAlignmentFix = true;
+          ["depth", "ptTopCover", "ptBottomCover", "ptDuctDiameter", "ptEnabled", "memberType", "panelX"].forEach((name) => {
+            const el = id(name);
+            if (!el || el.dataset.ptDepthAlignmentFix === "1") return;
+            el.dataset.ptDepthAlignmentFix = "1";
+            ["input", "change"].forEach((eventName) => {
+              el.addEventListener(eventName, () => {
+                try {
+                  drawAlignedPtProfile();
+                  if (typeof renderPtProfileSummary === "function") renderPtProfileSummary();
+                } catch {}
+              });
+            });
+          });
+          drawAlignedPtProfile();
+        }
+
+        function ptPreviewFromDom() {
+          const base = typeof previewPtInputFromDom === "function" ? previewPtInputFromDom() : appState()?.result?.input || {};
+          const D = Math.max(1, number(id("depth")?.value, base.D || 220));
+          return {
+            ...base,
+            D,
+            ptEnabled: Boolean(id("ptEnabled")?.checked),
+            memberType: id("memberType")?.value || base.memberType || "twoWay",
+            panelX: Math.max(0.5, number(id("panelX")?.value, base.panelX || 8)),
+            ptHighPoints: (appState()?.ptProfile?.highPoints || base.ptHighPoints || [25, 25]).map((value) => clampLocal(value, 0, D)),
+            ptLowPoints: (appState()?.ptProfile?.lowPoints || base.ptLowPoints || [D / 2]).map((value) => clampLocal(value, 0, D)),
+          };
+        }
+
+        function drawAlignedPtProfile() {
+          const canvas = id("ptProfileCanvas");
+          if (!canvas?.getContext) return;
+          canvas.width = 1400;
+          canvas.height = 660;
+          const input = ptPreviewFromDom();
+          const ctx = canvas.getContext("2d");
+          wipe(ctx, canvas);
+          ctx.fillStyle = "#17211d";
+          ctx.font = "28px system-ui";
+          ctx.fillText("Editable PT tendon profile", 34, 42);
+          ctx.fillStyle = input.ptEnabled ? "#a16207" : "#60706a";
+          ctx.font = "17px system-ui";
+          ctx.fillText(input.ptEnabled ? "Depth grid is locked to the Member panel Depth D input." : "Post-tensioning is off; profile depth is still shown from the member input.", 34, 68);
+
+          const layout = ptAlignedLayout(canvas, input);
+          drawPtDepthGrid(ctx, layout, input);
+          drawPtAlignedCurve(ctx, layout, input);
+          drawPtControlLabels(ctx, layout, input);
+          drawPtDepthDimension(ctx, layout, input);
+          drawPtLegend(ctx, layout.left, canvas.height - 42);
+        }
+
+        function ptAlignedLayout(canvas, input) {
+          const left = 108;
+          const right = canvas.width - 118;
+          const top = 118;
+          const maxDepthPx = canvas.height - 250;
+          const minDepthPx = 250;
+          const depthPx = clampLocal(input.D * 1.35, minDepthPx, maxDepthPx);
+          const total = ptProfileSpans(input).reduce((sum, span) => sum + span.length, 0) || 1;
+          return {
+            left,
+            right,
+            top,
+            depthPx,
+            width: right - left,
+            yScale: depthPx / Math.max(input.D, 1),
+            xScale: (right - left) / total,
+            total,
+          };
+        }
+
+        function ptProfileSpans(input) {
+          if ((input.memberType || "twoWay") === "twoWay") {
+            const spans = appState()?.twoWaySpansX?.length ? appState().twoWaySpansX : [input.panelX || 1];
+            return spans.map((length) => ({ length: Math.max(0.5, Number(length) || 0.5) }));
+          }
+          const spans = appState()?.spans || input.spans || [{ length: 1 }];
+          return spans.map((span) => ({ length: Math.max(0.5, Number(span.length ?? span) || 0.5) }));
+        }
+
+        function drawPtDepthGrid(ctx, layout, input) {
+          ctx.save();
+          ctx.fillStyle = "rgba(96,112,106,.06)";
+          ctx.strokeStyle = "rgba(96,112,106,.34)";
+          ctx.lineWidth = 2;
+          ctx.fillRect(layout.left, layout.top, layout.width, layout.depthPx);
+          ctx.strokeRect(layout.left, layout.top, layout.width, layout.depthPx);
+          [
+            [0, "0 mm top"],
+            [input.D / 2, `mid-depth ${Math.round(input.D / 2)} mm`],
+            [input.D, `full depth D = ${Math.round(input.D)} mm`],
+          ].forEach(([depth, label]) => {
+            const y = layout.top + depth * layout.yScale;
+            ctx.strokeStyle = depth === input.D / 2 ? "rgba(10,132,255,.45)" : "rgba(96,112,106,.3)";
+            ctx.lineWidth = depth === input.D ? 2.5 : 1.5;
+            ctx.beginPath();
+            ctx.moveTo(layout.left, y);
+            ctx.lineTo(layout.right, y);
+            ctx.stroke();
+            drawLabel(ctx, label, layout.left - 14, y + 4, depth === input.D ? "#17211d" : "#60706a", "right");
+          });
+          const limits = tendonDepthLimitsFromDom(input);
+          ctx.setLineDash([8, 6]);
+          ctx.strokeStyle = "#bd5b32";
+          [limits.min, limits.max].forEach((depth) => {
+            const y = layout.top + depth * layout.yScale;
+            ctx.beginPath();
+            ctx.moveTo(layout.left, y);
+            ctx.lineTo(layout.right, y);
+            ctx.stroke();
+          });
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#bd5b32";
+          ctx.font = "16px system-ui";
+          ctx.fillText(`duct centreline zone: ${limits.min.toFixed(0)}-${limits.max.toFixed(0)} mm from top, based on cover inputs`, layout.left, layout.top + layout.depthPx + 32);
+          ctx.restore();
+        }
+
+        function tendonDepthLimitsFromDom(input) {
+          if (typeof ptProfileLimits === "function") {
+            try {
+              const limits = ptProfileLimits(input);
+              if (Number.isFinite(limits.min) && Number.isFinite(limits.max)) return { min: clampLocal(limits.min, 0, input.D), max: clampLocal(limits.max, 0, input.D) };
+            } catch {}
+          }
+          const topCover = Math.max(0, number(id("ptTopCover")?.value, 25));
+          const bottomCover = Math.max(0, number(id("ptBottomCover")?.value, 25));
+          const duct = Math.max(0, number(id("ptDuctDiameter")?.value, 13));
+          const min = topCover + duct / 2;
+          return { min: clampLocal(min, 0, input.D), max: clampLocal(input.D - bottomCover - duct / 2, min, input.D) };
+        }
+
+        function drawPtAlignedCurve(ctx, layout, input) {
+          const spans = ptProfileSpans(input);
+          const highs = input.ptHighPoints?.length ? input.ptHighPoints : [input.D / 2, input.D / 2];
+          const lows = input.ptLowPoints?.length ? input.ptLowPoints : [input.D / 2];
+          let acc = 0;
+          ctx.save();
+          ctx.strokeStyle = "#a16207";
+          ctx.lineWidth = 4;
+          spans.forEach((span, i) => {
+            const x1 = layout.left + acc * layout.xScale;
+            const x2 = layout.left + (acc + span.length) * layout.xScale;
+            const h1 = clampLocal(highs[i] ?? highs[0] ?? input.D / 2, 0, input.D);
+            const h2 = clampLocal(highs[i + 1] ?? highs[highs.length - 1] ?? h1, 0, input.D);
+            const low = clampLocal(lows[i] ?? lows[0] ?? input.D / 2, 0, input.D);
+            ctx.beginPath();
+            for (let step = 0; step <= 48; step++) {
+              const r = step / 48;
+              const yFromTop = typeof tendonProfilePoint === "function" ? tendonProfilePoint(input, r, h1, h2, low) : h1 + (h2 - h1) * r + 4 * (low - (h1 + h2) / 2) * r * (1 - r);
+              const x = x1 + (x2 - x1) * r;
+              const y = layout.top + clampLocal(yFromTop, 0, input.D) * layout.yScale;
+              if (step === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            drawLabel(ctx, `span ${i + 1} ${span.length.toFixed(2)} m`, (x1 + x2) / 2, layout.top + layout.depthPx + 62, "#60706a", "center");
+            acc += span.length;
+          });
+          ctx.restore();
+        }
+
+        function drawPtControlLabels(ctx, layout, input) {
+          const spans = ptProfileSpans(input);
+          const highs = input.ptHighPoints || [];
+          const lows = input.ptLowPoints || [];
+          let acc = 0;
+          drawPoint(ctx, layout.left, layout.top + clampLocal(highs[0] ?? input.D / 2, 0, input.D) * layout.yScale, `H1 ${(highs[0] ?? input.D / 2).toFixed(0)}`, "#0a84ff");
+          spans.forEach((span, i) => {
+            const mid = acc + span.length / 2;
+            const end = acc + span.length;
+            const low = clampLocal(lows[i] ?? lows[0] ?? input.D / 2, 0, input.D);
+            const high = clampLocal(highs[i + 1] ?? highs[highs.length - 1] ?? input.D / 2, 0, input.D);
+            drawPoint(ctx, layout.left + mid * layout.xScale, layout.top + low * layout.yScale, `L${i + 1} ${low.toFixed(0)}`, "#bd5b32");
+            drawPoint(ctx, layout.left + end * layout.xScale, layout.top + high * layout.yScale, `H${i + 2} ${high.toFixed(0)}`, "#0a84ff");
+            acc = end;
+          });
+        }
+
+        function drawPoint(ctx, x, y, label, color) {
+          ctx.save();
+          ctx.fillStyle = color;
+          ctx.strokeStyle = "#fff";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(x, y, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          drawLabel(ctx, label, x + 10, y - 10, color, "left");
+          ctx.restore();
+        }
+
+        function drawPtDepthDimension(ctx, layout, input) {
+          const x = layout.right + 42;
+          const y1 = layout.top;
+          const y2 = layout.top + layout.depthPx;
+          ctx.save();
+          ctx.strokeStyle = "#17211d";
+          ctx.fillStyle = "#17211d";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, y1);
+          ctx.lineTo(x, y2);
+          ctx.stroke();
+          [["top", y1, -1], ["bottom", y2, 1]].forEach(([, y, dir]) => {
+            ctx.beginPath();
+            ctx.moveTo(x - 7, y + dir * 10);
+            ctx.lineTo(x, y);
+            ctx.lineTo(x + 7, y + dir * 10);
+            ctx.stroke();
+          });
+          ctx.font = "18px system-ui";
+          ctx.translate(x + 28, (y1 + y2) / 2);
+          ctx.rotate(-Math.PI / 2);
+          ctx.textAlign = "center";
+          ctx.fillText(`Member Depth D = ${Math.round(input.D)} mm`, 0, 0);
+          ctx.restore();
+        }
+
+        function drawPtLegend(ctx, x, y) {
+          const items = [["#0a84ff", "high point"], ["#bd5b32", "low point"], ["#a16207", "tendon centreline"], ["#60706a", "member depth grid"]];
+          ctx.save();
+          ctx.font = "16px system-ui";
+          items.forEach(([color, text], i) => {
+            const px = x + i * 210;
+            ctx.fillStyle = color;
+            ctx.fillRect(px, y - 12, 22, 4);
+            ctx.fillStyle = "#17211d";
+            ctx.fillText(text, px + 32, y - 4);
+          });
+          ctx.restore();
         }
 
         function patchTwoWayModel() {
