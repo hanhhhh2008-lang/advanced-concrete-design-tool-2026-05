@@ -13,6 +13,7 @@
     moveReoDiagram();
     punchPanel();
     patchReadInputs();
+    patchPlateDeflection();
     patchPt();
     patchDraw();
     patchRun();
@@ -124,11 +125,33 @@
       p.textContent = "AS 3600-style equivalent frame input: edit X spans only, then review column-strip, middle-strip and punching-shear actions.";
       q("twoWayPanelSection").querySelector(".section-title")?.after(p);
     }
-    q("addPanelXSpanBtn")?.addEventListener("click", () => {
-      state.twoWaySpansX.push(state.twoWaySpansX.at(-1) || 6);
-      drawXRows();
-      safeRun?.();
-    });
+    const addX = q("addPanelXSpanBtn");
+    if (addX && addX.dataset.cleanSingleHandler !== "1") {
+      const cleanButton = addX.cloneNode(true);
+      cleanButton.dataset.cleanSingleHandler = "1";
+      addX.replaceWith(cleanButton);
+      cleanButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.twoWaySpansX.push(state.twoWaySpansX.at(-1) || 6);
+        syncX();
+        drawXRows();
+        renderPtProfile?.();
+        safeRun?.();
+      }, true);
+    }
+    const addY = q("addPanelYSpanBtn");
+    if (addY && addY.dataset.cleanSingleHandler !== "1") {
+      const cleanButton = addY.cloneNode(true);
+      cleanButton.dataset.cleanSingleHandler = "1";
+      addY.replaceWith(cleanButton);
+      cleanButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        syncX();
+        drawXRows();
+      }, true);
+    }
   }
 
   function drawXRows() {
@@ -153,6 +176,70 @@
   function syncX() {
     if (q("panelX")) q("panelX").value = state.twoWaySpansX.reduce((s, v) => s + Math.max(0.5, Number(v) || 0.5), 0).toFixed(1);
     state.twoWaySpansY = [Math.max(1, Number(q("panelY")?.value || defaults.panelY || 7))];
+  }
+
+  function currentXSpans(input = {}) {
+    const raw = Array.isArray(input.twoWaySpansX) && input.twoWaySpansX.length
+      ? input.twoWaySpansX
+      : Array.isArray(state.twoWaySpansX) && state.twoWaySpansX.length
+        ? state.twoWaySpansX
+        : [Number(input.panelX || q("panelX")?.value || defaults.panelX || 8)];
+    const spans = raw.map((v) => Math.max(0.5, Number(v) || 0.5));
+    const total = spans.reduce((s, v) => s + v, 0);
+    const target = Math.max(0.5, Number(input.panelX) || total);
+    if (Math.abs(total - target) > 0.05) {
+      const scale = target / Math.max(total, 0.5);
+      return spans.map((v) => Math.max(0.5, v * scale));
+    }
+    return spans;
+  }
+
+  function patchPlateDeflection() {
+    if (typeof plateGridDeflection !== "function" || plateGridDeflection.cleanMultiSpanPatch) return;
+    const base = plateGridDeflection;
+    plateGridDeflection = function (input, qLoad, options = {}) {
+      const spans = currentXSpans(input);
+      if (input?.memberType !== "twoWay" || input.__singleSpanPlate || spans.length <= 1) {
+        const plate = base(input, qLoad, options);
+        if (input?.memberType === "twoWay") plate.xSpanLengths = spans;
+        return plate;
+      }
+
+      const points = [];
+      const xProfile = [];
+      let offset = 0;
+      let maxDeflectionM = 0;
+      let maxAt = { x: spans[0] / 2, y: Math.max(Number(input.panelY || 1), 1) / 2 };
+      let governing = null;
+
+      spans.forEach((span, spanIndex) => {
+        const plate = base({ ...input, panelX: span, twoWaySpansX: [span], __singleSpanPlate: true }, qLoad, options);
+        (plate.points || []).forEach((point) => points.push({ ...point, x: point.x + offset, localX: point.x, spanIndex }));
+        (plate.xProfile || []).forEach((point, index) => {
+          if (spanIndex > 0 && index === 0) return;
+          xProfile.push({ ...point, x: point.x + offset, localX: point.x, spanIndex, spanLength: span });
+        });
+        if (Math.abs(plate.maxDeflectionM || 0) > Math.abs(maxDeflectionM)) {
+          maxDeflectionM = Math.abs(plate.maxDeflectionM || 0);
+          maxAt = { x: offset + (plate.maxAt?.x || span / 2), y: plate.maxAt?.y || input.panelY / 2 };
+          governing = plate;
+        }
+        offset += span;
+      });
+
+      return {
+        grid: governing?.grid || input.plateGrid || 18,
+        stiffnessModifier: governing?.stiffnessModifier || 1,
+        restraintModifier: governing?.restraintModifier || 1,
+        points,
+        maxDeflectionM,
+        maxAt,
+        xProfile,
+        yProfile: governing?.yProfile || [],
+        xSpanLengths: spans,
+      };
+    };
+    plateGridDeflection.cleanMultiSpanPatch = true;
   }
 
   function moveReoDiagram() {
@@ -282,18 +369,19 @@
   function drawTwoWayModel() {
     const input = state.result.input, canvas = q("modelCanvas"), ctx = canvas.getContext("2d");
     clear(ctx, canvas);
-    title(ctx, "Two-way X-direction strip model", "Labels are kept in the side panel so the drawing stays readable.", 34, 44);
+    title(ctx, "Two-way slab equivalent-frame strip", "Each X span and support column is drawn from the current panel input.", 34, 44);
     const r = fit(input.panelX, input.panelY, 104, 96, canvas.width - 208, canvas.height - 190);
     ctx.fillStyle = "#f7fbff"; ctx.strokeStyle = "#17211d"; ctx.lineWidth = 3; ctx.fillRect(r.x, r.y, r.w, r.h); ctx.strokeRect(r.x, r.y, r.w, r.h);
     const strip = clamp((input.columnStripPercent || 50) / 100, 0.2, 0.85) * r.h;
     ctx.fillStyle = "rgba(10,132,255,0.13)"; ctx.fillRect(r.x, r.y + r.h / 2 - strip / 2, r.w, strip);
     ctx.fillStyle = "rgba(255,138,31,0.11)"; ctx.fillRect(r.x, r.y, r.w, r.h / 2 - strip / 2); ctx.fillRect(r.x, r.y + r.h / 2 + strip / 2, r.w, r.h / 2 - strip / 2);
-    spanTicks(ctx, r, state.twoWaySpansX || [input.panelX]);
+    const spans = currentXSpans(input);
+    spanTicks(ctx, r, spans);
+    supportColumns(ctx, r, input, spans);
     dim(ctx, r.x, r.y + r.h + 34, r.x + r.w, r.y + r.h + 34, `X length ${input.panelX.toFixed(2)} m`);
     dim(ctx, r.x - 36, r.y, r.x - 36, r.y + r.h, `strip width ${input.panelY.toFixed(2)} m`, true);
-    col(ctx, r.x + r.w / 2, r.y + r.h / 2, Math.max(22, input.columnX / 1000 * r.scale), Math.max(22, input.columnY / 1000 * r.scale));
     transfer(ctx, r, input);
-    legend(ctx, [["#0a84ff", "column strip"], ["#ff8a1f", "middle strip"], ["#60706a", "column"], ["#bd5b32", "transfer load"]], r.x, canvas.height - 54);
+    legend(ctx, [["#0a84ff", "column strip"], ["#ff8a1f", "middle strip"], ["#60706a", "support column"], ["#bd5b32", "transfer load"]], r.x, canvas.height - 54);
   }
 
   function drawLineModel() {
@@ -337,8 +425,13 @@
 
   function drawLimitClean() {
     const { input, twoWay } = state.result, canvas = q("limitCanvas"), ctx = canvas.getContext("2d"); clear(ctx, canvas);
-    const limit = input.panelX * 1000 / input.deflectionRatio;
-    const data = twoWay.shortPlate.xProfile.map((p, i) => ({ x: p.x, shortMm: p.defl * 1000, longMm: (twoWay.longPlate.xProfile[i]?.defl || p.defl) * 1000, limitMm: limit }));
+    const spans = currentXSpans(input);
+    const data = twoWay.shortPlate.xProfile.map((p, i) => ({
+      x: p.x,
+      shortMm: Math.abs(p.defl * 1000),
+      longMm: Math.abs((twoWay.longPlate.xProfile[i]?.defl || p.defl) * 1000),
+      limitMm: spanLimitAt(spans, p.x, input.deflectionRatio),
+    }));
     if (typeof drawDeflectionComparisonDiagram === "function") drawDeflectionComparisonDiagram(ctx, canvas, data, 70, 250, 220, "X-direction strip deflection: short-term / long-term", "#415f91", "#bd5b32");
     const row = as3600(twoWay.supportShear); if (row) gauge(ctx, row, 70, 570, canvas.width - 140, 110, "Punching shear remains checked in strength design");
   }
@@ -399,6 +492,32 @@
   function fit(wm, hm, x, y, mw, mh) { const s = Math.min(mw / Math.max(wm, .1), mh / Math.max(hm, .1)); return { x: x + (mw - wm * s) / 2, y: y + (mh - hm * s) / 2, w: wm * s, h: hm * s, scale: s }; }
   function dim(ctx, x1, y1, x2, y2, t, v) { ctx.save(); ctx.strokeStyle = "#60706a"; ctx.fillStyle = "#60706a"; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.font = "12px system-ui"; ctx.textAlign = "center"; if (v) { ctx.translate(x1 - 10, (y1 + y2) / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(t, 0, 0); } else ctx.fillText(t, (x1 + x2) / 2, y1 - 8); ctx.restore(); }
   function spanTicks(ctx, r, spans) { const total = spans.reduce((s, v) => s + Math.max(.5, Number(v) || .5), 0); let a = 0; spans.forEach((sp, i) => { const start = a; a += Math.max(.5, Number(sp) || .5); const x = r.x + a / total * r.w; if (i < spans.length - 1) { ctx.save(); ctx.setLineDash([7, 6]); ctx.strokeStyle = "#60706a"; ctx.beginPath(); ctx.moveTo(x, r.y); ctx.lineTo(x, r.y + r.h); ctx.stroke(); ctx.restore(); } ctx.fillStyle = "#60706a"; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(`X${i + 1} ${Number(sp).toFixed(1)} m`, r.x + (start + sp / 2) / total * r.w, r.y - 10); }); }
+  function supportColumns(ctx, r, input, spans) {
+    const total = spans.reduce((s, v) => s + Math.max(.5, Number(v) || .5), 0) || 1;
+    const colW = Math.max(20, Math.min(96, input.columnX / 1000 * r.scale));
+    const colH = Math.max(20, Math.min(96, input.columnY / 1000 * r.scale));
+    let xRun = 0;
+    [0, ...spans].forEach((span, i) => {
+      if (i > 0) xRun += Math.max(.5, Number(span) || .5);
+      const x = r.x + xRun / total * r.w;
+      const y = r.y + r.h / 2;
+      ctx.save();
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = "rgba(96,112,106,.42)";
+      ctx.beginPath();
+      ctx.moveTo(x, r.y);
+      ctx.lineTo(x, r.y + r.h);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      col(ctx, x, y, colW, colH);
+      ctx.fillStyle = "#60706a";
+      ctx.font = "11px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(`C${i + 1}`, x, y + colH / 2 + 18);
+      ctx.restore();
+    });
+  }
+  function spanLimitAt(spans, x, ratio) { let start = 0; const r = Math.max(Number(ratio || 250), 1); for (const span of spans) { const L = Math.max(.5, Number(span) || .5); if (x <= start + L + 1e-9) return L * 1000 / r; start += L; } return Math.max(.5, Number(spans.at(-1)) || 1) * 1000 / r; }
   function col(ctx, x, y, w, h) { ctx.fillStyle = "rgba(96,112,106,.24)"; ctx.strokeStyle = "#60706a"; ctx.lineWidth = 2; ctx.fillRect(x - w / 2, y - h / 2, w, h); ctx.strokeRect(x - w / 2, y - h / 2, w, h); }
   function transfer(ctx, r, i) { if (!(i.transferLoadKn > 0)) return; const x = r.x + clamp((i.transferX || i.panelX / 2) / i.panelX, 0, 1) * r.w, y = r.y + clamp((i.transferY || i.panelY / 2) / i.panelY, 0, 1) * r.h; ctx.fillStyle = "rgba(189,91,50,.18)"; ctx.strokeStyle = "#bd5b32"; ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.fillStyle = "#bd5b32"; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText(`${i.transferLoadKn.toFixed(0)} kN`, x, y - 26); }
   function legend(ctx, items, x, y) { let lx = x; ctx.font = "12px system-ui"; ctx.textAlign = "left"; items.forEach(([c, l]) => { ctx.fillStyle = c; ctx.fillRect(lx, y - 10, 18, 8); ctx.fillStyle = "#60706a"; ctx.fillText(l, lx + 25, y); lx += Math.max(118, l.length * 7 + 42); }); }
