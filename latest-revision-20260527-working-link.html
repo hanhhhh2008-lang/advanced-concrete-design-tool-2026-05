@@ -1,118 +1,13 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Advanced Concrete Design Tool - Fresh Working Revision</title>
-    <style>
-      html, body { margin: 0; min-height: 100%; background: #f4f7f5; color: #17211d; font-family: system-ui, Segoe UI, Arial, sans-serif; }
-      .loading { min-height: 100vh; display: grid; place-items: center; padding: 24px; text-align: center; }
-      .loading b { color: #126b63; }
-    </style>
-  </head>
-  <body>
-    <div class="loading"><div><b>Loading fresh revision...</b><br />Opening the concrete design tool with the latest beam defaults.</div></div>
-    <script>
-      (async function loadFreshRevision() {
-        const cacheKey = "20260527-working-link-v1";
-        const response = await fetch("index.html?fresh=" + cacheKey, { cache: "no-store" });
-        if (!response.ok) throw new Error("Could not load index.html: " + response.status);
-        const html = await response.text();
-        const parsed = new DOMParser().parseFromString(html, "text/html");
-        const scripts = Array.from(parsed.scripts);
-        scripts.forEach((script) => script.remove());
-        document.head.innerHTML = parsed.head.innerHTML;
-        document.body.innerHTML = parsed.body.innerHTML;
-        await Promise.all(Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map((link) => new Promise((resolve) => {
-          const href = link.getAttribute("href") || "";
-          link.href = withCache(href, cacheKey);
-          link.onload = resolve;
-          link.onerror = resolve;
-          setTimeout(resolve, 2000);
-        })));
-        for (const script of scripts) await loadScript(script, cacheKey);
-        await loadOptionalScript("analysis-manual-fixes.js", cacheKey);
-        patchBeamDefaults();
-        try { if (typeof safeRun === "function") safeRun(); } catch {}
-        window.__freshWorkingRevision = cacheKey;
-      })().catch((error) => {
-        document.body.innerHTML = '<div class="loading"><div><b>Could not load the fresh revision.</b><br />' + String(error) + '</div></div>';
-      });
-
-      function withCache(url, key) {
-        if (!url) return url;
-        return url + (url.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(key) + "&t=" + Date.now();
-      }
-
-      function loadScript(oldScript, key) {
-        return new Promise((resolve, reject) => {
-          const script = document.createElement("script");
-          if (oldScript.src || oldScript.getAttribute("src")) {
-            script.src = withCache(oldScript.getAttribute("src") || oldScript.src, key);
-            script.onload = resolve;
-            script.onerror = reject;
-          } else {
-            script.textContent = oldScript.textContent;
-            setTimeout(resolve, 0);
-          }
-          document.body.appendChild(script);
-          if (!oldScript.src && !oldScript.getAttribute("src")) resolve();
-        });
-      }
-
-      function loadOptionalScript(src, key) {
-        return new Promise((resolve) => {
-          const script = document.createElement("script");
-          script.src = withCache(src, key);
-          script.onload = resolve;
-          script.onerror = resolve;
-          document.body.appendChild(script);
-        });
-      }
-
-      function patchBeamDefaults() {
-        const id = (name) => document.getElementById(name);
-        const num = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
-        const beamBarCount = () => {
-          const b = num(id("width")?.value, 300);
-          const cover = num(id("cover")?.value, 40);
-          const dia = 16;
-          const centrelineWidth = Math.max(0, b - 2 * (cover + dia / 2));
-          return Math.max(2, Math.min(30, Math.round(centrelineWidth / 200) + 1));
-        };
-        const appState = () => { try { return state; } catch { return null; } };
-        const apply = () => {
-          if (id("memberType")?.value !== "beam") return;
-          const count = beamBarCount();
-          [["barDia", 16], ["layers", 1], ["topLayerBars", "N16"], ["bottomLayerBars", "N16"], ["topBarsPerM", count], ["bottomBarsPerM", count], ["shearLigDia", 12], ["shearLigLegs", 2], ["shearLigSpacing", 300]].forEach(([field, value]) => {
-            const el = id(field);
-            if (el) el.value = value;
-          });
-          const s = appState();
-          if (s?.rebarSchedule) {
-            s.rebarSchedule.top = [{ dia: 16, count }];
-            s.rebarSchedule.bottom = [{ dia: 16, count }];
-          }
-          try { if (typeof renderReinforcementInput === "function") renderReinforcementInput(); } catch {}
-          try { if (typeof safeRun === "function") safeRun(); } catch {}
-        };
-        id("memberType")?.addEventListener("change", () => setTimeout(apply, 0), true);
-        apply();
-        const originalDesignBeamStirrups = typeof designBeamStirrups === "function" ? designBeamStirrups : null;
-        if (originalDesignBeamStirrups && !window.__beamProvidedStirrupPatched) {
-          window.__beamProvidedStirrupPatched = true;
-          designBeamStirrups = function patchedDesignBeamStirrups(input, spec) {
-            const dia = Number(input?.shearLigDia ?? id("shearLigDia")?.value ?? 12);
-            const legs = Math.round(Number(input?.shearLigLegs ?? id("shearLigLegs")?.value ?? 2));
-            const spacing = Number(input?.shearLigSpacing ?? id("shearLigSpacing")?.value ?? 300);
-            if ([10, 12, 16].includes(dia) && legs >= 2 && legs <= 8 && Number.isFinite(spacing) && spacing > 0) {
-              const asv = legs * Math.PI * dia * dia / 4;
-              return { dia, legs, asv, spacing, required: !!spec?.needsLinks, steelPerM: asv * 1000 / spacing, text: `Provided ${legs}-R${dia} closed ligs @ ${spacing} mm` };
-            }
-            return originalDesignBeamStirrups(input, spec);
-          };
-        }
-      }
-    </script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="0; url=latest-revision-20260527-twoway-review.html?rev=9974eb54" />
+  <title>Redirecting to latest revision</title>
+</head>
+<body>
+  <p>Opening the latest revision. <a href="latest-revision-20260527-twoway-review.html?rev=9974eb54">Click here if it does not open automatically.</a></p>
+  <script>location.replace('latest-revision-20260527-twoway-review.html?rev=9974eb54&t=' + Date.now());</script>
+</body>
 </html>
